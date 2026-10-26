@@ -9,7 +9,7 @@ export default async function ImportStaffPage() {
   return (
     <>
       <PageHeader title="Importer du staff" description="Importez votre liste depuis un CSV : aperçu, validation ligne par ligne, puis import par lots." />
-      <div className="max-w-4xl"><ImportWizard defaultCountry={profile.country_code} /></div>
+      <div className="w-full max-w-none"><ImportWizard defaultCountry={profile.country_code} /></div>
     </>
   );
 }

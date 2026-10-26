@@ -1,30 +1,31 @@
 import Link from "next/link";
-import { Briefcase, Plus, Search, X } from "lucide-react";
+import { Briefcase, Plus } from "lucide-react";
 import { CancelMissionButton, ExportMissionsButton } from "@/components/missions/mission-actions";
+import { MissionsToolbar } from "@/components/missions/missions-toolbar";
+import { T } from "@/components/providers/t";
 import { missionLocation } from "@/components/missions/mission-card";
 import { MissionStatusBadge } from "@/components/ui/badge";
-import { Button, LinkButton } from "@/components/ui/button";
+import { LinkButton } from "@/components/ui/button";
 import { Alert, EmptyState, PageHeader } from "@/components/ui/card";
-import { Input, Select } from "@/components/ui/form";
 import { Pagination } from "@/components/ui/pagination";
 import { RefreshButton } from "@/components/ui/refresh-button";
-import { APP_CONFIG, MISSION_STATUS_LABELS } from "@/config/app";
-import { COUNTRY_LIST } from "@/config/countries";
 import { requireSession } from "@/lib/auth";
+import { getT } from "@/lib/i18n-server";
 import { applyMissionFilters, missionFiltersToParams, parseMissionFilters } from "@/lib/missions-query";
 import type { MissionOverview } from "@/lib/types";
-import { formatDateTime, formatDate, toQuery } from "@/lib/utils";
+import { formatDateTime, toQuery } from "@/lib/utils";
 
 export const metadata = { title: "Missions" };
 
+const th = "px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted whitespace-nowrap";
+
 export default async function MissionsPage({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
-  const { supabase, profile } = await requireSession();
+  const [{ supabase, profile }, { t }] = await Promise.all([requireSession(), getT()]);
   const f = parseMissionFilters(await searchParams);
   const from = (f.page - 1) * f.pageSize;
   const { data, count, error } = await applyMissionFilters(
     supabase.from("mission_overview").select("*", { count: "exact" }).order("created_at", { ascending: false }), f,
   ).range(from, from + f.pageSize - 1);
-
   const rows = (data ?? []) as MissionOverview[];
   const total = count ?? 0;
   const tz = profile.timezone;
@@ -34,84 +35,42 @@ export default async function MissionsPage({ searchParams }: { searchParams: Pro
     <>
       <PageHeader
         title="Missions"
-        description="Créez une mission, vérifiez son lieu, puis cherchez le staff disponible le plus proche."
-        actions={<><LinkButton href="/missions/new"><Plus className="h-4 w-4" aria-hidden /> Nouvelle mission</LinkButton><ExportMissionsButton /><RefreshButton /></>}
+        description={<T fr="Créez une mission, vérifiez son lieu, puis cherchez le staff disponible le plus proche." en="Create an assignment, verify its location, then find the nearest available staff." />}
+        actions={<><LinkButton href="/missions/new"><Plus className="h-4 w-4" aria-hidden /> <T fr="Nouvelle mission" en="New assignment" /></LinkButton><ExportMissionsButton disabled={total === 0} /><RefreshButton /></>}
+        toolbar={<MissionsToolbar filters={f} />}
       />
-
-      <form method="get" role="search" aria-label="Filtres des missions" className="mb-4 space-y-3 rounded-xl border border-line bg-surface p-4 shadow-card">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <Input name="q" defaultValue={f.q} aria-label="Titre ou référence" placeholder="Titre ou référence" />
-          <Input name="postal" defaultValue={f.postal} aria-label="Code postal" placeholder="Code postal" />
-          <Input name="city" defaultValue={f.city} aria-label="Ville" placeholder="Ville" />
-          <Select name="country" defaultValue={f.country} aria-label="Pays">
-            <option value="">Tous les pays</option>
-            {COUNTRY_LIST.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
-          </Select>
-          <Select name="status" defaultValue={f.status} aria-label="Statut">
-            <option value="all">Tous les statuts</option>
-            <option value="active">Actives (ouverte, en cours, pourvue)</option>
-            <option value="needs_staff">À pourvoir</option>
-            {(Object.keys(MISSION_STATUS_LABELS) as (keyof typeof MISSION_STATUS_LABELS)[]).map((s) => <option key={s} value={s}>{MISSION_STATUS_LABELS[s]}</option>)}
-          </Select>
-          <Select name="staffing" defaultValue={f.staffing} aria-label="Avancement du recrutement">
-            <option value="all">Tout avancement</option>
-            <option value="missing">Effectif incomplet</option>
-            <option value="complete">Effectif sélectionné atteint</option>
-          </Select>
-          <Input name="from" type="date" defaultValue={f.from} aria-label="Début à partir du" />
-          <Input name="to" type="date" defaultValue={f.to} aria-label="Début jusqu’au" />
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Select name="pageSize" defaultValue={String(f.pageSize)} aria-label="Lignes par page" className="w-40">
-            {APP_CONFIG.pagination.pageSizes.map((n) => <option key={n} value={n}>{n} par page</option>)}
-          </Select>
-          <div className="flex gap-2">
-            <Button type="submit" variant="secondary" size="sm"><Search className="h-4 w-4" aria-hidden /> Rechercher</Button>
-            <LinkButton href="/missions" variant="ghost" size="sm"><X className="h-4 w-4" aria-hidden /> Effacer les filtres</LinkButton>
-          </div>
-        </div>
-      </form>
-
-      {error ? <Alert tone="danger" title="Lecture impossible">La liste n’a pas pu être chargée. Vérifiez la configuration Supabase et les migrations.</Alert> : null}
-
+      {error ? <Alert tone="danger" title={<T fr="Lecture impossible" en="Unable to load" />}><T fr="La liste n’a pas pu être chargée. Réessayez dans un instant." en="The list could not be loaded. Please try again shortly." /></Alert> : null}
       {!error && rows.length === 0 ? (
         hasFilters ? (
-          <EmptyState icon={<Briefcase className="h-8 w-8" aria-hidden />} title="Aucune mission trouvée" description="Aucune mission ne correspond à ces filtres." actions={<LinkButton href="/missions" variant="secondary">Effacer les filtres</LinkButton>} />
+          <EmptyState icon={<Briefcase className="h-8 w-8" aria-hidden />} title={<T fr="Aucune mission trouvée" en="No assignments found" />} description={<T fr="Aucune mission ne correspond à ces filtres." en="No assignments match these filters." />} actions={<LinkButton href="/missions" variant="secondary"><T fr="Effacer les filtres" en="Clear filters" /></LinkButton>} />
         ) : (
-          <EmptyState icon={<Briefcase className="h-8 w-8" aria-hidden />} title="Aucune mission pour l’instant" description="Créez votre première mission pour trouver du staff près de son lieu." actions={<LinkButton href="/missions/new">Créer une mission</LinkButton>} />
+          <EmptyState icon={<Briefcase className="h-8 w-8" aria-hidden />} title={<T fr="Aucune mission pour l’instant" en="No assignments yet" />} description={<T fr="Créez votre première mission pour trouver du staff près de son lieu." en="Create your first assignment to find nearby staff." />} actions={<LinkButton href="/missions/new"><T fr="Nouvelle mission" en="New assignment" /></LinkButton>} />
         )
       ) : null}
-
       {rows.length > 0 ? (
         <>
-          <div className="overflow-x-auto rounded-xl border border-line bg-surface shadow-card">
-            <table className="w-full min-w-[60rem] text-left text-sm">
-              <thead className="border-b border-line bg-bg text-xs uppercase tracking-wide text-muted">
-                <tr>
-                  <th scope="col" className="px-4 py-3">Réf.</th><th scope="col" className="px-4 py-3">Titre</th><th scope="col" className="px-4 py-3">Lieu</th>
-                  <th scope="col" className="px-4 py-3">Début</th><th scope="col" className="px-4 py-3">Requis</th><th scope="col" className="px-4 py-3">Sélectionnés</th>
-                  <th scope="col" className="px-4 py-3">Statut</th><th scope="col" className="px-4 py-3">Mise à jour</th><th scope="col" className="px-4 py-3">Actions</th>
-                </tr>
-              </thead>
+          <div className="overflow-x-auto md:overflow-visible">
+            <table className="data-table w-full min-w-[56rem] border-separate border-spacing-0 rounded-xl border border-line bg-surface text-sm shadow-[var(--shadow-card)]">
+              <thead><tr>
+                <th className={th}>{t("Mission", "Assignment")}</th><th className={th}>{t("Lieu", "Location")}</th><th className={th}>{t("Début", "Start")}</th>
+                <th className={th}>{t("Effectif", "Staffing")}</th><th className={th}>{t("Statut", "Status")}</th><th className={`${th} text-right`}>{t("Actions", "Actions")}</th>
+              </tr></thead>
               <tbody className="divide-y divide-line">
                 {rows.map((m) => {
                   const closed = m.status === "cancelled" || m.status === "completed";
+                  const pct = Math.min(100, Math.round((m.selected_count / Math.max(1, m.required_staff_count)) * 100));
                   return (
-                    <tr key={m.id} className="align-top hover:bg-bg/60">
-                      <td className="px-4 py-3 text-muted">{m.mission_reference ?? "—"}</td>
-                      <td className="px-4 py-3 font-medium"><Link href={`/missions/${m.id}`} className="hover:text-primary hover:underline">{m.title}</Link></td>
-                      <td className="px-4 py-3">{missionLocation(m)}{m.location_status !== "resolved" ? <span className="block text-xs text-warning">Lieu à vérifier</span> : null}</td>
-                      <td className="px-4 py-3 whitespace-nowrap">{m.scheduled_start_at ? formatDateTime(m.scheduled_start_at, tz) : "—"}</td>
-                      <td className="px-4 py-3">{m.required_staff_count}</td>
-                      <td className="px-4 py-3">{m.selected_count} <span className="text-xs text-muted">({m.confirmed_count} confirmé{m.confirmed_count > 1 ? "s" : ""})</span></td>
-                      <td className="px-4 py-3"><MissionStatusBadge status={m.status} /></td>
-                      <td className="px-4 py-3 whitespace-nowrap text-muted">{formatDate(m.updated_at, tz)}</td>
-                      <td className="px-4 py-3">
-                        <div className="flex flex-wrap gap-1.5">
-                          <LinkButton href={`/missions/${m.id}`} variant="secondary" size="sm">Voir</LinkButton>
-                          {!closed ? <LinkButton href={`/missions/${m.id}/edit`} variant="secondary" size="sm">Modifier</LinkButton> : null}
-                          {!closed ? <LinkButton href={`/missions/${m.id}/staff`} size="sm">Trouver du staff</LinkButton> : null}
-                          <LinkButton href={`/missions/${m.id}#staff`} variant="ghost" size="sm">Staff sélectionné</LinkButton>
+                    <tr key={m.id} className="border-t border-line">
+                      <td className="px-3 py-2.5"><Link href={`/missions/${m.id}`} className="block max-w-[18rem] truncate font-medium hover:text-primary">{m.title}</Link><span className="font-mono text-[11px] text-muted">{m.mission_reference ?? "—"}</span></td>
+                      <td className="px-3 py-2.5"><span className="block max-w-[14rem] truncate">{missionLocation(m)}</span>{m.location_status !== "resolved" ? <span className="text-xs text-warning">{t("Lieu à vérifier", "Location to verify")}</span> : null}</td>
+                      <td className="whitespace-nowrap px-3 py-2.5">{m.scheduled_start_at ? formatDateTime(m.scheduled_start_at, tz) : "—"}</td>
+                      <td className="px-3 py-2.5"><div className="flex items-center gap-2"><div className="h-1.5 w-16 overflow-hidden rounded-full bg-line"><div className="h-full bg-primary" style={{ width: `${pct}%` }} /></div><span className="whitespace-nowrap text-xs tabular-nums text-muted">{m.selected_count}/{m.required_staff_count} · {m.confirmed_count} {t("conf.", "conf.")}</span></div></td>
+                      <td className="px-3 py-2.5"><MissionStatusBadge status={m.status} /></td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex justify-end gap-1.5">
+                          {!closed ? <LinkButton href={`/missions/${m.id}/staff`} size="sm"><T fr="Trouver du staff" en="Find staff" /></LinkButton> : null}
+                          <LinkButton href={`/missions/${m.id}`} variant="secondary" size="sm"><T fr="Voir" en="View" /></LinkButton>
+                          {!closed ? <LinkButton href={`/missions/${m.id}/edit`} variant="ghost" size="sm"><T fr="Modifier" en="Edit" /></LinkButton> : null}
                           {m.status !== "cancelled" ? <CancelMissionButton id={m.id} title={m.title} size="sm" /> : null}
                         </div>
                       </td>
@@ -121,7 +80,7 @@ export default async function MissionsPage({ searchParams }: { searchParams: Pro
               </tbody>
             </table>
           </div>
-          <Pagination page={f.page} pageSize={f.pageSize} total={total} hrefFor={(p) => `/missions${toQuery(missionFiltersToParams(f, { page: p <= 1 ? "" : p }))}`} />
+          <Pagination page={f.page} pageSize={f.pageSize} total={total} basePath="/missions" params={missionFiltersToParams(f, { page: "" })}/>
         </>
       ) : null}
     </>

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cacheExpiry, isCacheFresh, routeCacheKey } from "./cache";
-import { approximateEstimate } from "./fallback";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { ESTIMATE_ONLY_MODES, approximateEstimate, trainEstimate } from "./fallback";
+import { getRoutingCapabilities, getRouteEstimates } from "./service";
 import { MapboxRoutingProvider } from "./mapbox";
 
 const A = { latitude: 51.5, longitude: -0.1 };
@@ -33,8 +35,11 @@ describe("expiration du cache", () => {
 });
 
 describe("approximateEstimate (repli)", () => {
-  it("pas de repli pour les transports en commun", () => {
-    expect(approximateEstimate("public_transport", { straightLineM: 5000 })).toBeNull();
+  it("transports en commun : estimation train, jamais un horaire", () => {
+    const e = approximateEstimate("public_transport", { straightLineM: 10_000 });
+    expect(e).toMatchObject({ status: "approximate", mode: "public_transport", basis: "straight_line", kind: "train_estimate" });
+    expect(e?.note).toMatch(/approximative/i);
+    expect(approximateEstimate("public_transport", { straightLineM: null })).toBeNull();
   });
   it("basé sur la distance à vol d'oiseau : marqué straight_line", () => {
     const e = approximateEstimate("walking", { straightLineM: 4800 });
@@ -45,6 +50,36 @@ describe("approximateEstimate (repli)", () => {
     expect(approximateEstimate("driving", { straightLineM: 1000, roadDistanceM: 40_000 })).toMatchObject({ basis: "road_distance", distanceM: 40_000 });
   });
   it("null sans aucune distance", () => expect(approximateEstimate("driving", { straightLineM: null })).toBeNull());
+});
+
+describe("trainEstimate", () => {
+  it("distance × 1,2 à 80 km/h + 12 min d'attente", () => {
+    const e = trainEstimate(50_000);
+    expect(e?.distanceM).toBeCloseTo(60_000, 3);
+    // 60 km à 80 km/h = 45 min, + 12 min
+    expect(e?.durationS).toBeCloseTo(57 * 60, 3);
+    expect(e).toMatchObject({ status: "approximate", kind: "train_estimate", mode: "public_transport" });
+  });
+  it("distance nulle : uniquement l'attente ; invalide : null", () => {
+    expect(trainEstimate(0)?.durationS).toBe(12 * 60);
+    expect(trainEstimate(-1)).toBeNull();
+    expect(trainEstimate(Number.NaN)).toBeNull();
+  });
+  it("public_transport est « estimate-only » ; les modes réels restent pris en charge", () => {
+    expect(ESTIMATE_ONLY_MODES).toEqual(["public_transport"]);
+    const caps = getRoutingCapabilities();
+    expect(caps.estimateOnlyModes).toEqual(["public_transport"]);
+    expect(caps.supportedModes).toEqual(expect.arrayContaining(["driving", "walking", "cycling"]));
+    expect(caps.supportedModes).not.toContain("public_transport");
+  });
+  it("getRouteEstimates : estimation train sans fournisseur, sans réseau ni cache", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    const supabase = { from: () => { throw new Error("pas de cache pour le train"); } } as unknown as SupabaseClient;
+    const out = await getRouteEstimates(supabase, "owner", [{ id: "s1", latitude: 51.5, longitude: -0.1 }], { latitude: 51.6, longitude: -0.2 }, "public_transport");
+    expect(out.get("s1")).toMatchObject({ status: "approximate", kind: "train_estimate" });
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
 });
 
 describe("MapboxRoutingProvider", () => {

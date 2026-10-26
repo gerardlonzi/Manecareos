@@ -1,4 +1,4 @@
--- StaffFlow — fonctions géographiques et agrégats
+-- Manecare — fonctions géographiques et agrégats
 -- Toutes en SECURITY INVOKER : la RLS s'applique, un manager ne voit que ses lignes.
 
 -- Distance orthodromique (Haversine) en mètres.

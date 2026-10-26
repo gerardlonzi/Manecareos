@@ -1,4 +1,4 @@
--- StaffFlow — schéma initial
+-- Manecare — schéma initial
 -- Toutes les tables privées appartiennent à un manager (owner_id = auth.uid()).
 
 create extension if not exists pgcrypto;

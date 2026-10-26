@@ -1,9 +1,10 @@
 /**
- * Configuration centralisée de StaffFlow.
+ * Configuration centralisée de Manecare.
  * Rien ici ne dépend d'un pays en particulier : le pays de lancement vient de l'environnement.
  */
 export const APP_CONFIG = {
-  name: "Manecareos",
+  name: "Manecare",
+  company: "Maneliza Care",
   tagline: "Trouvez le bon personnel, près de la mission, en quelques secondes.",
   defaultCountry: (process.env.NEXT_PUBLIC_DEFAULT_COUNTRY ?? "GB").toUpperCase(),
 
@@ -23,6 +24,11 @@ export const APP_CONFIG = {
     requestTimeoutMs: 8000,
     /** Vitesses moyennes (km/h) du repli approximatif — jamais présenté comme un itinéraire réel. */
     fallbackSpeedsKmh: { driving: 40, walking: 4.8, cycling: 15 } as Record<string, number>,
+    /** Train : ESTIMATION par vitesse moyenne supposée, jamais un horaire. */
+    trainDetourFactor: 1.2,
+    trainSpeedKmh: 80,
+    /** Attente + embarquement ajoutés à chaque trajet en train. */
+    trainOverheadMinutes: 12,
   },
 
   geocoding: {

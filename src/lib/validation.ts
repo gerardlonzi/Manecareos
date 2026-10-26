@@ -30,6 +30,7 @@ export const staffInputSchema = z.object({
   full_name: z.string().trim().min(1, "Le nom est obligatoire").max(200, "200 caractères maximum"),
   staff_code: optText(50),
   phone: optText(32),
+  phone_country_code: countryCode.optional(),
   email: emailField,
   country_code: countryCode,
   postal_code: optText(16),
@@ -38,6 +39,7 @@ export const staffInputSchema = z.object({
   skills: skillsField,
   availability_status: z.enum(["available", "unavailable", "unknown"]).default("unknown"),
   notes: optText(4000),
+  weekly_hours: z.preprocess((v) => (v === "" || v === null || v === undefined ? null : Number(v)), z.number({ error: "Nombre invalide" }).min(0, "Minimum 0").max(168, "168 heures maximum par semaine").nullable()).default(null),
 });
 export type StaffInput = z.infer<typeof staffInputSchema>;
 

@@ -57,24 +57,36 @@ export async function computeLocation(input: LocationInput, prev?: LocationPrev 
     key = pc.key;
   }
 
+  // Ville seule : le code postal enregistré (dérivé lors d'une précédente résolution) ne compte pas comme un changement.
+  const keepPrevPostal = key === null;
   const unchanged =
     !opts.force && prev && prev.location_status === "resolved" && prev.latitude !== null && prev.longitude !== null &&
-    same(prev.country_code, input.country_code) && (prev.postal_code_normalized ?? null) === key && same(prev.city, input.city) && same(prev.region, input.region);
+    same(prev.country_code, input.country_code) && (keepPrevPostal || (prev.postal_code_normalized ?? null) === key) && same(prev.city, input.city) && same(prev.region, input.region);
   if (unchanged && prev) {
     return {
       ok: true, reused: true,
-      fields: { ...base, postal_code: display, postal_code_normalized: key, latitude: prev.latitude, longitude: prev.longitude, location_status: "resolved", location_updated_at: prev.location_updated_at },
+      fields: { ...base, postal_code: keepPrevPostal ? prev.postal_code : display, postal_code_normalized: keepPrevPostal ? prev.postal_code_normalized : key, latitude: prev.latitude, longitude: prev.longitude, location_status: "resolved", location_updated_at: prev.location_updated_at },
     };
   }
 
   const r = await resolveLocation({ countryCode: input.country_code, postalCode: display, city: input.city, region: input.region });
   if (r.ok) {
+    // Code postal dérivé (ville seule) : stocké seulement s'il est valide ; un code saisi n'est jamais remplacé.
+    let savedDisplay = display;
+    let savedKey = key;
+    if (!display && r.postal_derived && r.postalDisplay) {
+      const pc = normalizePostalCode(input.country_code, r.postalDisplay);
+      if (pc.ok) {
+        savedDisplay = pc.display;
+        savedKey = pc.key;
+      }
+    }
     return {
       ok: true, reused: false,
       event: { type: "location_resolved", description: "Localisation résolue" },
       fields: {
         ...base, city: input.city ?? r.city, region: input.region ?? r.region,
-        postal_code: display, postal_code_normalized: key,
+        postal_code: savedDisplay, postal_code_normalized: savedKey,
         latitude: r.latitude, longitude: r.longitude,
         location_status: "resolved", location_updated_at: new Date().toISOString(),
       },

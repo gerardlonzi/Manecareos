@@ -1,36 +1,38 @@
 "use client";
+
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, Columns2, Download, GitCompare, List, Map as MapIcon, RefreshCw, Route as RouteIcon, Search, UserPlus } from "lucide-react";
+import { Bike, Car, Check, Download, Footprints, Loader2, MapPin, SlidersHorizontal, TrainFront, UserPlus, X, Clock3, Building2, Search } from "lucide-react";
 import { toast } from "sonner";
+
 import { exportCandidatesCsv } from "@/actions/export";
 import { selectStaffForMission } from "@/actions/assignments";
-import { estimateRoutes, getRouteGeometry, searchNearby } from "@/actions/search";
+import { estimateRoutes, getTravelOptions, searchNearby, type TravelOptions } from "@/actions/search";
 import CandidateMap from "@/components/map/candidate-map-lazy";
 import { ContactButtons } from "@/components/staff/contact-buttons";
-import { AssignmentBadge, AvailabilityBadge, Badge, LocationBadge } from "@/components/ui/badge";
+import { SkillChips, SkillPicker } from "@/components/staff/skill-picker";
+import { usePreferences } from "@/components/providers/preferences-provider";
+import { AssignmentBadge, AvailabilityBadge, Badge } from "@/components/ui/badge";
+import { Avatar } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Alert, Card, CardBody } from "@/components/ui/card";
-import { Field, Input, Select } from "@/components/ui/form";
-import { APP_CONFIG, TRANSPORT_LABELS } from "@/config/app";
+import { Flag } from "@/components/ui/flag";
+import { Input } from "@/components/ui/form";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
+import { APP_CONFIG } from "@/config/app";
 import { downloadCsv } from "@/lib/download";
 import { formatDistance, formatDuration, type DistanceUnit } from "@/lib/geo/format";
+import { groupByTown } from "@/lib/neighbours";
 import { rankCandidates, type SortKey } from "@/lib/ranking";
 import type { RouteEstimate } from "@/lib/routing/types";
 import type { CandidateDTO, NearbyResult, RouteMap, RoutingCapabilitiesDTO, SearchTarget } from "@/lib/search-types";
 import type { MissionStatus, TransportMode } from "@/lib/types";
-import { cn, formatDateTime, normalizeSkills } from "@/lib/utils";
+import { cn, normalizeSkills } from "@/lib/utils";
 
-const MODES: TransportMode[] = ["driving", "walking", "cycling", "public_transport"];
-const SORTS: { value: SortKey; label: string }[] = [
-  { value: "default", label: "Classement par défaut (dispo → trajet → distance)" },
-  { value: "straight_line", label: "Distance à vol d’oiseau" },
-  { value: "road_distance", label: "Distance routière" },
-  { value: "travel_time", label: "Temps de trajet estimé" },
-  { value: "name", label: "Nom" },
-];
+const MODES: TransportMode[] = ["walking", "cycling", "driving", "public_transport"];
 const ROUTE_BATCH = 8;
+/** En deçà de ce rayon autour du point de recherche, un candidat compte comme « sur place » même si sa ville diffère. */
+const SAME_TOWN_RADIUS_M = 3000;
 
 export type SearchMission = { id: string; title: string; status: MissionStatus; requiredStaffCount: number; selectedCount: number };
 
@@ -41,380 +43,335 @@ type Props = {
   unit: DistanceUnit;
   timeZone: string;
   defaults: { radiusKm: number; availability: "available" | "all"; mode: TransportMode };
-  /** Présent uniquement pour la recherche liée à une mission : active la sélection. */
   mission?: SearchMission;
-  referenceLabel?: string;
+  /** Ville du point de recherche (sert à séparer « même ville » et « villes voisines »). */
+  originCity?: string | null;
+  originLabel?: string;
+  /** Mode « carte partagée » (page Find Staff) : aucune carte ici, l’état est transmis à la grande carte du parent. */
+  onMapState?: (state: SharedMapState | null) => void;
 };
 
-function RouteInfo({ route, loading, unit, supported }: { route?: RouteEstimate; loading: boolean; unit: DistanceUnit; supported: boolean }) {
-  if (!supported) return <p className="text-sm text-muted">Estimation indisponible pour ce mode de transport.</p>;
-  if (!route) return <p className="text-sm text-muted">{loading ? "Calcul de l’itinéraire…" : "Itinéraire non calculé"}</p>;
-  if (route.status === "ok") {
-    return (
-      <div className="text-sm">
-        <p><span className="text-muted">Distance routière :</span> <strong>{formatDistance(route.distanceM, unit)}</strong></p>
-        <p><span className="text-muted">Temps de trajet estimé :</span> <strong>{formatDuration(route.durationS)}</strong></p>
-        <p className="text-xs text-muted">{route.provider} · calculé le {formatDateTime(route.estimatedAt)}{route.source === "cache" ? " (cache)" : ""}</p>
-      </div>
-    );
-  }
-  if (route.status === "approximate") {
-    return (
-      <div className="text-sm">
-        <p><span className="text-muted">Estimation approximative :</span> <strong>≈ {formatDuration(route.durationS)}</strong></p>
-        <p className="text-xs text-warning">Vitesse moyenne sur {route.basis === "straight_line" ? "la distance à vol d’oiseau" : "la distance routière"} — ce n’est pas un itinéraire réel.</p>
-      </div>
-    );
-  }
-  return (
-    <div className="text-sm">
-      <p className="font-medium">Temps de trajet indisponible</p>
-      <p className="text-xs text-muted">{route.message}</p>
-    </div>
-  );
-}
+export type SharedMapState = {
+  origin: { latitude: number; longitude: number; label: string; title?: string };
+  radiusKm: number;
+  candidates: { id: string; name: string; latitude: number; longitude: number; assigned: boolean; routeKnown: boolean }[];
+  highlightedId: string | null;
+  onMarkerClick: (id: string) => void;
+  routeCoordinates: [number, number][] | null;
+  approxLine: [number, number][] | null;
+};
 
-export function CandidateSearch({ target, routing, mapToken, unit, timeZone, defaults, mission, referenceLabel }: Props) {
+const MODE_ICON = { walking: Footprints, cycling: Bike, driving: Car, public_transport: TrainFront } as const;
+
+const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/\s+/g, "");
+
+export function CandidateSearch({ target, routing, mapToken, unit, defaults, mission, originCity, originLabel, onMapState }: Props) {
   const router = useRouter();
-  const [radiusKm, setRadiusKm] = React.useState<number>(defaults.radiusKm);
+  const { t, tm, locale } = usePreferences();
+  const dist = React.useCallback((m: number | null | undefined, u: DistanceUnit = unit) => { const s = formatDistance(m, u); return locale === "en" ? s.replace(",", ".") : s; }, [unit, locale]);
+  const modeLabel: Record<TransportMode, string> = { walking: t("À pied", "On foot"), cycling: t("À vélo", "By bike"), driving: t("En voiture", "By car"), public_transport: t("En train", "By train") };
+
+  const [radiusKm, setRadiusKm] = React.useState(defaults.radiusKm);
   const [availability, setAvailability] = React.useState<"available" | "all">(defaults.availability);
   const [skillsText, setSkillsText] = React.useState("");
-  const [maxResults, setMaxResults] = React.useState<number>(50);
-  const [mode, setMode] = React.useState<TransportMode>(routing.supportedModes.includes(defaults.mode) ? defaults.mode : routing.supportedModes[0] ?? "driving");
-  const [sort, setSort] = React.useState<SortKey>("default");
-  const [view, setView] = React.useState<"split" | "list" | "map">("split");
+  const [maxResults, setMaxResults] = React.useState(50);
+  const [sort, setSort] = React.useState<SortKey>("straight_line");
+  const [neighbours, setNeighbours] = React.useState(true);
+  const [textFilter, setTextFilter] = React.useState("");
+  const [filtersOpen, setFiltersOpen] = React.useState(false);
 
   const [result, setResult] = React.useState<NearbyResult | null>(null);
-  const [searching, setSearching] = React.useState(true); // une recherche part à l’ouverture
+  const [searching, setSearching] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
   const [routes, setRoutes] = React.useState<RouteMap>({});
-  const [routesLoading, setRoutesLoading] = React.useState(false);
-  const [routeProgress, setRouteProgress] = React.useState<{ done: number; total: number } | null>(null);
-  const [routeNotice, setRouteNotice] = React.useState<string | null>(null);
-
+  const [listMode, setListMode] = React.useState<TransportMode>(routing.supportedModes.includes(defaults.mode) ? defaults.mode : routing.supportedModes[0] ?? "driving");
   const [highlightedId, setHighlightedId] = React.useState<string | null>(null);
-  const [geometry, setGeometry] = React.useState<[number, number][] | null>(null);
-  const [compareIds, setCompareIds] = React.useState<string[]>([]);
+  const [travel, setTravel] = React.useState<TravelOptions | null>(null);
+  const [travelLoading, setTravelLoading] = React.useState(false);
+  const [routeMode, setRouteMode] = React.useState<TransportMode>("driving");
   const [selectingId, setSelectingId] = React.useState<string | null>(null);
   const [exporting, setExporting] = React.useState(false);
 
-  const runId = React.useRef(0);
-  const cardRefs = React.useRef(new Map<string, HTMLElement>());
-  const modeSupported = routing.supportedModes.includes(mode) && routing.configured;
+  const searchId = React.useRef(0);
+  const routeRun = React.useRef(0);
+  const travelRun = React.useRef(0);
+  const rowRefs = React.useRef(new Map<string, HTMLElement>());
 
-  const params = React.useMemo(
-    () => ({ target, radiusKm, availability, skills: normalizeSkills(skillsText), maxResults }),
-    [target, radiusKm, availability, skillsText, maxResults],
-  );
+  const params = React.useMemo(() => ({ target, radiusKm, availability, skills: normalizeSkills(skillsText), maxResults }), [target, radiusKm, availability, skillsText, maxResults]);
 
-  /** Étape 2 : itinéraires réels pour un lot borné de candidats (les plus proches), par petits paquets avec résultats partiels. */
-  const loadRoutes = React.useCallback(async (data: NearbyResult, m: TransportMode, refresh: boolean) => {
-    const id = ++runId.current;
-    setRouteNotice(null);
-    if (!routing.configured) { setRouteNotice("Le fournisseur d’itinéraires n’est pas configuré (jeton serveur manquant) : seules les distances à vol d’oiseau sont affichées."); setRoutes({}); return; }
-    if (!routing.supportedModes.includes(m)) { setRouteNotice(`Le mode « ${TRANSPORT_LABELS[m]} » n’est pas pris en charge : aucune estimation n’est affichée (un temps de voiture ne serait pas valable).`); setRoutes({}); return; }
-    const ids = data.candidates.slice(0, APP_CONFIG.search.maxRouteCandidates).map((c) => c.id);
-    if (ids.length === 0) { setRoutes({}); return; }
-    setRoutesLoading(true);
-    setRouteProgress({ done: 0, total: ids.length });
+  /** Durées réelles (mode du classement) pour les premiers candidats, par lots. Facultatif : la liste s’affiche déjà sans. */
+  const loadRoutes = React.useCallback(async (data: NearbyResult, mode: TransportMode) => {
+    const run = ++routeRun.current;
     setRoutes({});
-    let done = 0;
+    if (!routing.configured || !routing.supportedModes.includes(mode)) return;
+    const ids = data.candidates.slice(0, APP_CONFIG.search.maxRouteCandidates).map((c) => c.id);
     for (let i = 0; i < ids.length; i += ROUTE_BATCH) {
-      const batch = ids.slice(i, i + ROUTE_BATCH);
-      const r = await estimateRoutes({ target, staffIds: batch, mode: m, refresh });
-      if (id !== runId.current) return; // une recherche plus récente a pris le relais
-      if (!r.ok || !r.data) { setRouteNotice(r.ok ? "Réponse vide du service d’itinéraires." : r.error); break; }
-      setRoutes((prev) => ({ ...prev, ...r.data!.estimates }));
-      done += batch.length;
-      setRouteProgress({ done, total: ids.length });
+      const response = await estimateRoutes({ target, staffIds: ids.slice(i, i + ROUTE_BATCH), mode });
+      if (run !== routeRun.current) return;
+      if (!response.ok || !response.data) break;
+      setRoutes((prev) => ({ ...prev, ...response.data!.estimates }));
     }
-    if (id === runId.current) { setRoutesLoading(false); setRouteProgress(null); }
   }, [routing.configured, routing.supportedModes, target]);
 
-  /** Étape 1 : candidats proches par distance à vol d’oiseau. */
-  const applyResult = React.useCallback((r: Awaited<ReturnType<typeof searchNearby>>, refreshRoutes: boolean) => {
-    setSearching(false);
-    setError(null);
-    setGeometry(null);
-    setHighlightedId(null);
-    setCompareIds([]);
-    if (!r.ok || !r.data) { setResult(null); setRoutes({}); setError(r.ok ? "Réponse vide" : r.error); return; }
-    setResult(r.data);
-    void loadRoutes(r.data, mode, refreshRoutes);
-  }, [mode, loadRoutes]);
-
-  const search = (refreshRoutes = false) => {
-    setSearching(true);
-    void searchNearby(params).then((r) => applyResult(r, refreshRoutes));
-  };
-
-  // Recherche automatique à l’ouverture (la cible ne change pas sans remontage du composant : voir `key` côté appelant).
+  // Recherche en direct : chaque changement de filtre relance la recherche (anti-rebond 300 ms).
   React.useEffect(() => {
-    let alive = true;
-    void searchNearby(params).then((r) => { if (alive) applyResult(r, false); });
-    return () => { alive = false; };
-    // Exécutée une seule fois : les filtres suivants passent par le bouton « Chercher ».
+    const id = ++searchId.current;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSearching(true);
+    const timer = window.setTimeout(() => {
+      void searchNearby(params).then((response) => {
+        if (id !== searchId.current) return;
+        setSearching(false);
+        if (!response.ok || !response.data) { setResult(null); setError(tm(response.ok ? "Aucun résultat n’a été renvoyé. Réessayez." : response.error)); return; }
+        setError(null); setResult(response.data); setHighlightedId(null); setTravel(null);
+        void loadRoutes(response.data, listMode);
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+    // listMode et loadRoutes : volontairement hors dépendances (le mode de la liste ne relance pas la recherche).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [params]);
 
-  const changeMode = (m: TransportMode) => {
-    setMode(m);
-    setGeometry(null);
-    // Seules les estimations sont recalculées : les candidats et leurs coordonnées ne changent pas.
-    if (result) void loadRoutes(result, m, false);
-  };
+  React.useEffect(() => () => { searchId.current++; routeRun.current++; travelRun.current++; }, []);
 
-  const ranked = React.useMemo(() => {
+  const changeListMode = (m: TransportMode) => { setListMode(m); if (result) void loadRoutes(result, m); };
+
+  const visible = React.useMemo(() => {
     if (!result) return [];
-    return rankCandidates(result.candidates.map((c) => ({ ...c, route: routes[c.id] })), sort);
-  }, [result, routes, sort]);
+    const q = norm(textFilter.trim());
+    const withRoutes = result.candidates.map((c) => ({ ...c, route: routes[c.id] }));
+    return q ? withRoutes.filter((c) => norm(`${c.fullName} ${c.staffCode ?? ""} ${c.city ?? ""} ${c.postalCode ?? ""} ${c.region ?? ""}`).includes(q)) : withRoutes;
+  }, [result, routes, textFilter]);
 
-  const selectedCount = mission ? mission.selectedCount : 0;
+  const grouped = React.useMemo(() => {
+    const g = groupByTown(visible, { originCity, sameTownRadiusM: SAME_TOWN_RADIUS_M });
+    return { sameTown: rankCandidates(g.sameTown, sort), towns: g.towns.map((town) => ({ ...town, items: rankCandidates(town.items, sort) })) };
+  }, [visible, originCity, sort]);
+
+  const neighbourCount = grouped.towns.reduce((n, g) => n + g.items.length, 0);
+  const shown = neighbours ? [...grouped.sameTown, ...grouped.towns.flatMap((g) => g.items)] : grouped.sameTown;
+
   const missionClosed = mission ? mission.status === "cancelled" || mission.status === "completed" : true;
 
-  const highlight = (id: string | null, scroll = false) => {
-    setHighlightedId(id);
-    setGeometry(null);
-    if (id && scroll) cardRefs.current.get(id)?.scrollIntoView({ block: "nearest", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth" });
+  const open = async (c: CandidateDTO) => {
+    if (highlightedId === c.id) { setHighlightedId(null); setTravel(null); return; }
+    setHighlightedId(c.id);
+    setTravel(null);
+    setTravelLoading(true);
+    const run = ++travelRun.current;
+    const response = await getTravelOptions({ target, staffId: c.id });
+    if (run !== travelRun.current) return;
+    setTravelLoading(false);
+    if (!response.ok || !response.data) { toast.error(tm(response.ok ? "Itinéraire indisponible." : response.error)); return; }
+    setTravel(response.data);
+    const preferred = [listMode, "driving", "walking", "cycling"].find((m) => response.data!.geometry[m as "driving" | "walking" | "cycling"]);
+    setRouteMode((preferred as TransportMode | undefined) ?? "driving");
   };
+
+  const focusFromMap = (id: string) => {
+    const c = result?.candidates.find((x) => x.id === id);
+    if (c) { void open(c); rowRefs.current.get(id)?.scrollIntoView({ block: "center", behavior: "smooth" }); }
+  };
+
+  const origin = result?.origin;
+  const hi = highlightedId ? result?.candidates.find((c) => c.id === highlightedId) : undefined;
+  const realGeometry = travel && routeMode !== "public_transport" ? travel.geometry[routeMode] ?? null : null;
+  const approxLine: [number, number][] | null = travel && hi && origin && routeMode === "public_transport" ? [[hi.longitude, hi.latitude], [origin.longitude, origin.latitude]] : null;
 
   const select = async (c: CandidateDTO) => {
     if (!mission) return;
     setSelectingId(c.id);
-    const r = await selectStaffForMission(mission.id, c.id);
+    const response = await selectStaffForMission(mission.id, c.id);
     setSelectingId(null);
-    if (!r.ok) { toast.error(r.error); return; }
-    toast.success(r.message ?? "Sélectionné");
-    setResult((prev) => prev && { ...prev, candidates: prev.candidates.map((x) => x.id === c.id ? { ...x, assignment: { id: r.data!.assignmentId, status: "selected" } } : x) });
+    if (!response.ok) { toast.error(tm(response.error)); return; }
+    toast.success(tm(response.message ?? "Sélectionné"));
+    setResult((prev) => prev ? { ...prev, candidates: prev.candidates.map((x) => x.id === c.id ? { ...x, assignment: { id: response.data!.assignmentId, status: "selected" } } : x) } : prev);
     router.refresh();
-  };
-
-  const showRoute = async (c: CandidateDTO) => {
-    const r = await getRouteGeometry({ target, staffId: c.id, mode });
-    if (!r.ok) { toast.error(r.error); return; }
-    if (!r.data?.coordinates) { toast.info("Le fournisseur n’a pas renvoyé de tracé pour ce trajet : seules la distance et la durée sont affichées."); return; }
-    setGeometry(r.data.coordinates);
   };
 
   const exportResults = async () => {
     setExporting(true);
-    const r = await exportCandidatesCsv({ params, mode, sort });
-    setExporting(false);
-    if (!r.ok || !r.data) { toast.error(r.ok ? "Export vide" : r.error); return; }
-    downloadCsv(r.data.filename, r.data.csv);
-    toast.success(`${r.data.count} candidat(s) exporté(s)`);
+    try {
+      const r = await exportCandidatesCsv({ params, mode: listMode, sort });
+      if (!r.ok || !r.data) { toast.error(tm(r.ok ? "Aucune donnée à exporter." : r.error)); return; }
+      downloadCsv(r.data.filename, r.data.csv);
+      toast.success(t(`${r.data.count} candidat(s) exporté(s)`, `${r.data.count} candidate(s) exported`));
+    } finally { setExporting(false); }
   };
 
-  const toggleCompare = (id: string) => setCompareIds((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : prev.length >= 3 ? (toast.info("Comparaison limitée à 3 candidats."), prev) : [...prev, id]);
-  const compared = ranked.filter((c) => compareIds.includes(c.id));
+  const row = (c: (typeof shown)[number]) => {
+    const active = c.id === highlightedId;
+    const r: RouteEstimate | undefined = c.route;
+    return (
+      <li key={c.id} ref={(el) => { if (el) rowRefs.current.set(c.id, el); else rowRefs.current.delete(c.id); }} className={cn("transition-colors", active && "bg-primary-soft/60")}>
+        <button type="button" onClick={() => void open(c)} aria-expanded={active} className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-primary-soft/40">
+          <Avatar name={c.fullName} photoUrl={c.photoUrl} size={36} />
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{c.fullName}</span>{c.assignment ? <AssignmentBadge status={c.assignment.status} /> : null}</span>
+            <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted">
+              <Flag code={c.countryCode} region={c.region} />
+              <span className="truncate">{c.city ?? "—"}</span>
+              {c.postalCode ? <span className="rounded bg-surface-2 px-1 font-mono ring-1 ring-line">{c.postalCode}</span> : null}
+              {c.weeklyHours != null ? <span className="hidden items-center gap-0.5 sm:inline-flex"><Clock3 className="h-3 w-3" aria-hidden />{c.weeklyHours} h</span> : null}
+            </span>
+          </span>
+          <span className="hidden shrink-0 md:block"><SkillChips skills={c.skills} max={2} /></span>
+          <span className="shrink-0 text-right">
+            <span className="block text-sm font-semibold tabular-nums">{dist(c.straightLineM)}</span>
+            {r && r.status === "ok" ? <span className="block text-[11px] tabular-nums text-muted">{formatDuration(r.durationS)}</span> : null}
+          </span>
+        </button>
 
-  const mapCandidates = React.useMemo(
-    () => (result?.candidates ?? []).map((c) => ({ id: c.id, name: c.fullName, latitude: c.latitude, longitude: c.longitude, assigned: c.assignment !== null, routeKnown: routes[c.id]?.status === "ok" })),
-    [result, routes],
-  );
+        {active ? (
+          <div className="anim-fade space-y-3 border-t border-line/70 px-4 pb-4 pt-3">
+            <div className="flex flex-wrap items-center gap-2"><AvailabilityBadge status={c.availability} />{c.staffCode ? <span className="font-mono text-xs text-muted">{c.staffCode}</span> : null}<span className="md:hidden"><SkillChips skills={c.skills} max={3} /></span></div>
 
-  const originTitle = mission ? mission.title : referenceLabel ?? "Point de référence";
-  const showList = view !== "map";
-  const showMap = view !== "list";
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted">{t("Trajet jusqu’au point de recherche", "Journey to the search point")}</p>
+              {travelLoading ? <p className="flex items-center gap-2 text-sm text-muted"><Loader2 className="h-4 w-4 animate-spin" aria-hidden />{t("Calcul des itinéraires…", "Computing journeys…")}</p> : null}
+              {travel ? (
+                <>
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-4" role="tablist" aria-label={t("Mode de transport", "Transport mode")}>
+                    {MODES.map((m) => {
+                      const Icon = MODE_ICON[m];
+                      const est = travel.options[m];
+                      const ok = est && (est.status === "ok" || est.status === "approximate");
+                      const train = m === "public_transport";
+                      const selectedTab = routeMode === m;
+                      const hasLine = train ? true : Boolean(travel.geometry[m as "driving" | "walking" | "cycling"]);
+                      return (
+                        <button key={m} type="button" role="tab" aria-selected={selectedTab} onClick={() => setRouteMode(m)}
+                          className={cn("rounded-lg border p-2.5 text-left", selectedTab ? "border-primary bg-surface ring-2 ring-primary/20" : "border-line bg-surface hover:border-primary/40")}>
+                          <span className="flex items-center gap-1.5 text-xs font-semibold"><Icon className="h-4 w-4 text-primary" aria-hidden />{modeLabel[m]}</span>
+                          {ok ? (
+                            <>
+                              <span className="mt-1 block text-sm font-semibold tabular-nums">{est.status === "approximate" ? "≈ " : ""}{formatDuration(est.durationS)}</span>
+                              <span className="block text-[11px] tabular-nums text-muted">{dist(est.distanceM)}{!hasLine && !train ? ` · ${t("sans tracé", "no line")}` : ""}</span>
+                            </>
+                          ) : <span className="mt-1 block text-xs text-muted">{t("Indisponible", "Unavailable")}</span>}
+                          {train && ok ? <span className="mt-0.5 block text-[10px] font-medium text-warning">{t("estimation", "estimate")}</span> : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {routeMode === "public_transport" ? (
+                    <p className="mt-2 rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning">{t(`Durée en train estimée à vitesse moyenne supposée (${APP_CONFIG.routing.trainSpeedKmh} km/h + ${APP_CONFIG.routing.trainOverheadMinutes} min d’attente), sans horaire réel. Ligne pointillée = trajet direct approximatif.`, `Train time is estimated from an assumed average speed (${APP_CONFIG.routing.trainSpeedKmh} km/h + ${APP_CONFIG.routing.trainOverheadMinutes} min waiting), not a real timetable. Dotted line = approximate direct path.`)}</p>
+                  ) : !realGeometry ? (
+                    <p className="mt-2 text-xs text-muted">{routing.configured ? t("Le fournisseur n’a pas renvoyé de tracé pour ce mode.", "The provider returned no route line for this mode.") : t("Tracé indisponible : clé de cartographie absente.", "Route line unavailable: no mapping key configured.")}</p>
+                  ) : null}
+                  <p className="mt-1.5 text-[11px] text-muted">{t("Distance à vol d’oiseau", "Straight-line distance")} : {dist(travel.straightLineM)}</p>
+                </>
+              ) : null}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <ContactButtons phone={c.phone} />
+              {mission && !c.assignment && !missionClosed ? <Button size="sm" pending={selectingId === c.id} onClick={() => void select(c)}><UserPlus className="h-4 w-4" aria-hidden />{t("Sélectionner pour la mission", "Select for assignment")}</Button> : null}
+              {c.assignment ? <span className="inline-flex items-center gap-1 text-xs text-success"><Check className="h-4 w-4" aria-hidden />{t("Déjà sélectionné", "Already selected")}</span> : null}
+              <Link href={`/staff/${c.id}`} className="ml-auto text-sm font-medium text-primary hover:underline">{t("Voir la fiche", "View profile")}</Link>
+            </div>
+          </div>
+        ) : null}
+      </li>
+    );
+  };
+
+  const mapCandidates = shown.map((c) => ({ id: c.id, name: c.fullName, latitude: c.latitude, longitude: c.longitude, assigned: Boolean(c.assignment), routeKnown: Boolean(c.route) }));
+
+  // Carte partagée : on transmet l’état (marqueurs, tracé, point de recherche) à la carte unique du parent.
+  const focusRef = React.useRef(focusFromMap);
+  React.useEffect(() => { focusRef.current = focusFromMap; });
+  const sharedKey = JSON.stringify([origin?.latitude, origin?.longitude, radiusKm, highlightedId, mapCandidates.map((c) => `${c.id}${c.assigned ? 1 : 0}${c.routeKnown ? 1 : 0}`), realGeometry?.length ?? 0, realGeometry?.[0], approxLine?.[0]]);
+  const latest = React.useRef({ origin, radiusKm, mapCandidates, highlightedId, realGeometry, approxLine, title: mission?.title ?? t("Point de recherche", "Search point") });
+  React.useEffect(() => { latest.current = { origin, radiusKm, mapCandidates, highlightedId, realGeometry, approxLine, title: mission?.title ?? t("Point de recherche", "Search point") }; });
+  React.useEffect(() => {
+    if (!onMapState) return;
+    const l = latest.current;
+    onMapState(l.origin ? { origin: { latitude: l.origin.latitude, longitude: l.origin.longitude, label: l.origin.label, title: l.title }, radiusKm: l.radiusKm, candidates: l.mapCandidates, highlightedId: l.highlightedId, onMarkerClick: (id) => focusRef.current(id), routeCoordinates: l.realGeometry, approxLine: l.approxLine } : null);
+  }, [sharedKey, onMapState]);
+  React.useEffect(() => () => onMapState?.(null), [onMapState]);
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardBody className="space-y-4">
-          <form className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" onSubmit={(e) => { e.preventDefault(); search(false); }} aria-label="Filtres de recherche">
-            <Field id="radius" label="Rayon de recherche">
-              <Select id="radius" value={radiusKm} onChange={(e) => setRadiusKm(Number(e.target.value))}>
-                {APP_CONFIG.search.radiiKm.map((r) => <option key={r} value={r}>{r} km</option>)}
-              </Select>
-            </Field>
-            <Field id="availability" label="Disponibilité" hint="« Inconnue » n’est jamais comptée comme disponible.">
-              <Select id="availability" value={availability} onChange={(e) => setAvailability(e.target.value as "available" | "all")}>
-                <option value="available">Disponibles uniquement</option>
-                <option value="all">Tous les statuts</option>
-              </Select>
-            </Field>
-            <Field id="skills" label="Compétences requises" hint="Séparées par des virgules ; toutes sont exigées.">
-              <Input id="skills" value={skillsText} onChange={(e) => setSkillsText(e.target.value)} placeholder={mission ? "ex. aide-soignant" : "ex. chauffeur"} autoComplete="off" />
-            </Field>
-            <Field id="maxResults" label="Résultats maximum">
-              <Select id="maxResults" value={maxResults} onChange={(e) => setMaxResults(Number(e.target.value))}>
-                {APP_CONFIG.search.maxResultsOptions.map((n) => <option key={n} value={n}>{n}</option>)}
-              </Select>
-            </Field>
-            <Field id="mode" label="Mode de transport">
-              <Select id="mode" value={mode} onChange={(e) => changeMode(e.target.value as TransportMode)} aria-describedby="mode-help">
-                {MODES.map((m) => {
-                  const ok = routing.supportedModes.includes(m);
-                  return <option key={m} value={m} disabled={!ok}>{TRANSPORT_LABELS[m]}{ok ? "" : " — non pris en charge"}</option>;
-                })}
-              </Select>
-            </Field>
-            <Field id="sort" label="Trier par" className="lg:col-span-2">
-              <Select id="sort" value={sort} onChange={(e) => setSort(e.target.value as SortKey)}>
-                {SORTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-              </Select>
-            </Field>
-            <div className="flex items-end gap-2">
-              <Button type="submit" pending={searching} className="flex-1"><Search className="h-4 w-4" aria-hidden /> Chercher</Button>
+    <div className={onMapState ? "min-w-0" : "grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.05fr)]"}>
+      {/* Carte (reste visible pendant le défilement de la liste) */}
+      {!onMapState ? <section className="min-w-0 lg:sticky lg:top-[calc(var(--table-top,0px)+0.75rem)]" aria-label={t("Carte", "Map")}>
+        {origin ? (
+          <CandidateMap token={mapToken} origin={{ latitude: origin.latitude, longitude: origin.longitude, label: origin.label, title: mission?.title ?? t("Point de recherche", "Search point") }}
+            radiusKm={radiusKm} candidates={mapCandidates} highlightedId={highlightedId} onMarkerClick={focusFromMap}
+            routeCoordinates={realGeometry} approxLine={approxLine} className="h-[45vh] min-h-[320px] lg:h-[calc(100dvh-var(--table-top,0px)-2rem)]" />
+        ) : (
+          <div className="grid h-[45vh] min-h-[320px] place-items-center rounded-xl border border-line bg-surface text-sm text-muted">{searching ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden /> : t("Carte indisponible.", "Map unavailable.")}</div>
+        )}
+      </section> : null}
+
+      {/* Liste */}
+      <section className="min-w-0 space-y-3" aria-label={t("Résultats", "Results")}>
+        <div className="card-surface space-y-3 p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="flex items-center gap-2 text-sm font-semibold">{searching ? <Loader2 className="h-4 w-4 animate-spin text-primary" aria-hidden /> : <MapPin className="h-4 w-4 text-primary" aria-hidden />}
+                {searching ? t("Recherche…", "Searching…") : t(`${shown.length} personne(s)`, `${shown.length} people`)}</p>
+              <p className="truncate text-xs text-muted">{originLabel ?? origin?.label} · {t("rayon", "radius")} {radiusKm} km{mission ? ` · ${t("sélectionnés", "selected")} ${mission.selectedCount}/${mission.requiredStaffCount}` : ""}</p>
             </div>
-          </form>
-          <p id="mode-help" className="text-xs text-muted">
-            {routing.supportedModes.includes("public_transport") ? "" : "Transports en commun : non disponibles (aucun fournisseur d’horaires configuré). "}
-            Les coordonnées viennent des codes postaux : distances et durées sont des estimations, pas des garanties.
-          </p>
-        </CardBody>
-      </Card>
-
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted" aria-live="polite">
-          {searching ? "Recherche en cours…" : result ? <>
-            <strong className="text-ink">{result.candidates.length}</strong> candidat(s) dans {radiusKm} km de « {originTitle} » ({result.origin.label}).{" "}
-            {mission ? <>Sélectionnés : <strong className="text-ink">{selectedCount}</strong> sur {mission.requiredStaffCount}.</> : null}
-          </> : null}
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex overflow-hidden rounded-lg border border-line" role="group" aria-label="Affichage">
-            {([["list", "Liste", List], ["split", "Liste + carte", Columns2], ["map", "Carte", MapIcon]] as const).map(([v, label, Icon]) => (
-              <button key={v} type="button" aria-pressed={view === v} onClick={() => setView(v)} className={cn("inline-flex h-9 items-center gap-1.5 px-3 text-sm", view === v ? "bg-primary-soft font-medium text-primary" : "bg-surface hover:bg-bg")}>
-                <Icon className="h-4 w-4" aria-hidden /> <span className="hidden sm:inline">{label}</span><span className="sr-only sm:hidden">{label}</span>
-              </button>
-            ))}
+            <Button size="sm" variant={filtersOpen ? "soft" : "secondary"} aria-expanded={filtersOpen} onClick={() => setFiltersOpen((v) => !v)}><SlidersHorizontal className="h-4 w-4" aria-hidden />{t("Filtres", "Filters")}</Button>
+            <Button size="sm" variant="secondary" pending={exporting} disabled={!result || result.candidates.length === 0} onClick={() => void exportResults()}><Download className="h-4 w-4" aria-hidden /><span className="hidden sm:inline">{t("Exporter", "Export")}</span></Button>
           </div>
-          <Button variant="secondary" size="sm" disabled={!result || searching || routesLoading} onClick={() => result && void loadRoutes(result, mode, true)}>
-            <RefreshCw className="h-4 w-4" aria-hidden /> Actualiser les itinéraires
-          </Button>
-          <Button variant="secondary" size="sm" pending={exporting} disabled={!result || result.candidates.length === 0} onClick={exportResults}>
-            {!exporting ? <Download className="h-4 w-4" aria-hidden /> : null} Exporter les résultats
-          </Button>
+
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden />
+            <Input value={textFilter} onChange={(e) => setTextFilter(e.target.value)} placeholder={t("Filtrer par code postal, ville ou nom…", "Filter by postcode, city or name…")} aria-label={t("Filtrer les résultats", "Filter results")} className="h-9 pl-9 pr-9" />
+            {textFilter ? <button type="button" onClick={() => setTextFilter("")} aria-label={t("Effacer", "Clear")} className="absolute right-2 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-muted hover:bg-primary-soft"><X className="h-3.5 w-3.5" aria-hidden /></button> : null}
+          </div>
+
+          <label className="flex cursor-pointer items-start gap-3 rounded-lg bg-surface-2 px-3 py-2.5">
+            <input type="checkbox" checked={neighbours} onChange={(e) => setNeighbours(e.target.checked)} className="mt-0.5 h-4 w-4 accent-[var(--color-primary)]" />
+            <span className="text-sm"><span className="flex items-center gap-1.5 font-medium"><Building2 className="h-4 w-4 text-primary" aria-hidden />{t("Inclure les villes voisines", "Include neighbouring towns")}</span><span className="block text-xs text-muted">{t("Affiche aussi le staff qui habite dans les villes autour, avec le nom de la ville et la distance en km.", "Also shows staff living in nearby towns, with the town name and distance in km.")}</span></span>
+          </label>
+
+          {filtersOpen ? (
+            <div className="anim-fade grid gap-3 border-t border-line pt-3 sm:grid-cols-2">
+              <div><span className="mb-1.5 block text-xs font-medium">{t("Rayon", "Radius")}</span>
+                <SearchablePicker id="cs-radius" value={String(radiusKm)} onValueChange={(v) => setRadiusKm(Number(v))} options={[...APP_CONFIG.search.radiiKm, 75, 100].map((k) => ({ value: String(k), label: `${k} km` }))} /></div>
+              <div><span className="mb-1.5 block text-xs font-medium">{t("Disponibilité", "Availability")}</span>
+                <SearchablePicker id="cs-avail" value={availability} onValueChange={(v) => setAvailability(v as "available" | "all")} options={[{ value: "available", label: t("Disponibles uniquement", "Available only") }, { value: "all", label: t("Tous (hors archivés)", "Everyone (not archived)") }]} /></div>
+              <div><span className="mb-1.5 block text-xs font-medium">{t("Trier par", "Sort by")}</span>
+                <SearchablePicker id="cs-sort" value={sort} onValueChange={(v) => setSort(v as SortKey)} options={[{ value: "straight_line", label: t("Distance à vol d’oiseau", "Straight-line distance") }, { value: "default", label: t("Classement par défaut", "Default ranking") }, { value: "travel_time", label: t("Temps de trajet", "Travel time") }, { value: "road_distance", label: t("Distance routière", "Road distance") }, { value: "name", label: t("Nom", "Name") }]} /></div>
+              <div><span className="mb-1.5 block text-xs font-medium">{t("Durée affichée dans la liste", "Time shown in the list")}</span>
+                <SearchablePicker id="cs-mode" value={listMode} onValueChange={(v) => changeListMode(v as TransportMode)} options={(["driving", "walking", "cycling"] as TransportMode[]).filter((m) => routing.supportedModes.includes(m)).map((m) => ({ value: m, label: modeLabel[m] }))} /></div>
+              <div><span className="mb-1.5 block text-xs font-medium">{t("Nombre maximum", "Maximum results")}</span>
+                <SearchablePicker id="cs-max" value={String(maxResults)} onValueChange={(v) => setMaxResults(Number(v))} options={APP_CONFIG.search.maxResultsOptions.map((n) => ({ value: String(n), label: String(n) }))} /></div>
+              <div className="sm:col-span-2"><span className="mb-1.5 block text-xs font-medium">{t("Compétences requises", "Required skills")}</span><SkillPicker id="cs-skills" value={skillsText} onChange={setSkillsText} /></div>
+            </div>
+          ) : null}
         </div>
-      </div>
 
-      {error ? <Alert tone="danger" title="Recherche impossible">{error}</Alert> : null}
-      {routeNotice ? <Alert tone="warning">{routeNotice}</Alert> : null}
-      {routeProgress ? <p className="text-xs text-muted" aria-live="polite">Itinéraires : {routeProgress.done} / {routeProgress.total} calculés (les plus proches d’abord, par lots de {ROUTE_BATCH}).</p> : null}
-      {result && result.candidates.length > APP_CONFIG.search.maxRouteCandidates ? (
-        <p className="text-xs text-muted">Les itinéraires sont calculés pour les {APP_CONFIG.search.maxRouteCandidates} candidats les plus proches ; les autres affichent « Itinéraire non calculé ».</p>
-      ) : null}
-      {result?.truncated ? <Alert tone="info">Résultats limités à {maxResults}. Réduisez le rayon ou ajoutez des compétences pour affiner.</Alert> : null}
-      {result && result.excludedUnresolved > 0 ? (
-        <Alert tone="warning" title={`${result.excludedUnresolved} staff exclu(s) : localisation non vérifiée`}>
-          Ces personnes correspondent à vos filtres mais n’ont pas de coordonnées vérifiées. <Link className="underline" href="/staff?location=pending">Résoudre les localisations</Link>
-        </Alert>
-      ) : null}
+        {error ? <p role="alert" className="rounded-xl bg-danger-soft px-4 py-3 text-sm text-danger">{error}</p> : null}
+        {result && result.excludedUnresolved > 0 ? <p className="rounded-xl bg-warning-soft px-4 py-3 text-xs text-warning">{t(`${result.excludedUnresolved} personne(s) correspondent mais n’ont pas de localisation vérifiée.`, `${result.excludedUnresolved} matching people have no verified location.`)}</p> : null}
+        {result?.truncated ? <p className="text-xs text-muted">{t("Résultats limités au maximum choisi : réduisez le rayon ou les filtres.", "Results capped at the chosen maximum: narrow the radius or filters.")}</p> : null}
 
-      {compared.length >= 2 ? (
-        <Card>
-          <CardBody className="overflow-x-auto">
-            <div className="mb-2 flex items-center justify-between"><h2 className="text-sm font-semibold">Comparaison</h2><Button variant="ghost" size="sm" onClick={() => setCompareIds([])}>Fermer la comparaison</Button></div>
-            <table className="w-full min-w-[32rem] text-left text-sm">
-              <thead className="text-xs uppercase tracking-wide text-muted"><tr><th className="py-2 pr-3">Critère</th>{compared.map((c) => <th key={c.id} className="py-2 pr-3 normal-case text-ink">{c.fullName}</th>)}</tr></thead>
-              <tbody className="divide-y divide-line">
-                <tr><td className="py-2 pr-3 text-muted">Disponibilité</td>{compared.map((c) => <td key={c.id} className="py-2 pr-3"><AvailabilityBadge status={c.availability} /></td>)}</tr>
-                <tr><td className="py-2 pr-3 text-muted">Distance à vol d’oiseau</td>{compared.map((c) => <td key={c.id} className="py-2 pr-3">{formatDistance(c.straightLineM, unit)}</td>)}</tr>
-                <tr><td className="py-2 pr-3 text-muted">Distance routière</td>{compared.map((c) => <td key={c.id} className="py-2 pr-3">{c.route?.status === "ok" ? formatDistance(c.route.distanceM, unit) : "Indisponible"}</td>)}</tr>
-                <tr><td className="py-2 pr-3 text-muted">Temps de trajet estimé</td>{compared.map((c) => <td key={c.id} className="py-2 pr-3">{c.route?.status === "ok" ? formatDuration(c.route.durationS) : c.route?.status === "approximate" ? `≈ ${formatDuration(c.route.durationS)} (approx.)` : "Indisponible"}</td>)}</tr>
-                <tr><td className="py-2 pr-3 text-muted">Compétences</td>{compared.map((c) => <td key={c.id} className="py-2 pr-3">{c.skills.join(", ") || "—"}</td>)}</tr>
-                <tr><td className="py-2 pr-3 text-muted">Localisation</td>{compared.map((c) => <td key={c.id} className="py-2 pr-3"><LocationBadge status={c.locationStatus} /></td>)}</tr>
-              </tbody>
-            </table>
-          </CardBody>
-        </Card>
-      ) : null}
+        {result && !searching && shown.length === 0 && !error ? (
+          <div className="card-surface px-6 py-10 text-center"><MapPin className="mx-auto mb-2 h-6 w-6 text-muted" aria-hidden /><p className="font-semibold">{t("Aucun staff trouvé", "No staff found")}</p><p className="mt-1 text-sm text-muted">{textFilter ? t("Aucun résultat pour ce filtre.", "No results for this filter.") : neighbours ? t("Essayez un rayon plus grand ou « Tous » pour la disponibilité.", "Try a larger radius or “Everyone” for availability.") : t("Activez « villes voisines » ou agrandissez le rayon.", "Turn on “neighbouring towns” or enlarge the radius.")}</p></div>
+        ) : null}
 
-      <div className={cn("grid gap-4", showList && showMap ? "lg:grid-cols-2" : "grid-cols-1")}>
-        {showMap ? (
-          <div className={cn(showList && "lg:sticky lg:top-4 lg:self-start", showList && "order-first")}>
-            {result ? (
-              <CandidateMap
-                token={mapToken}
-                origin={{ latitude: result.origin.latitude, longitude: result.origin.longitude, label: result.origin.label, title: originTitle }}
-                radiusKm={radiusKm}
-                candidates={mapCandidates}
-                highlightedId={highlightedId}
-                onMarkerClick={(id) => highlight(id, true)}
-                routeCoordinates={geometry}
-                className={showList ? "h-[24rem]" : "h-[36rem]"}
-              />
-            ) : (
-              <div className="grid h-[24rem] place-items-center rounded-xl border border-dashed border-line bg-bg text-sm text-muted">La carte s’affiche après une recherche réussie.</div>
-            )}
-            <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted" aria-label="Légende">
-              <li><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#3157d5]" />Staff correspondant</li>
-              <li><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#067647]" />Staff sélectionné</li>
-              <li><span className="mr-1 inline-block h-2.5 w-2.5 rounded-full bg-[#b54708]" />Staff mis en évidence</li>
-              <li>Cercle : rayon de recherche · Localisations enregistrées, pas de suivi en direct</li>
-            </ul>
+        {grouped.sameTown.length > 0 ? (
+          <div className="card-surface overflow-hidden">
+            <h3 className="flex items-center justify-between border-b border-line bg-surface-2 px-4 py-2 text-xs font-semibold uppercase tracking-wide text-muted"><span>{originCity ? t(`À ${originCity} et alentours immédiats`, `In and around ${originCity}`) : t("Sur place et alentours immédiats", "On site and immediate surroundings")}</span><Badge tone="blue">{grouped.sameTown.length}</Badge></h3>
+            <ul className="divide-y divide-line">{grouped.sameTown.map(row)}</ul>
           </div>
         ) : null}
 
-        {showList ? (
-          <div className="space-y-3" aria-label="Résultats">
-            {!searching && result && ranked.length === 0 ? (
-              <Alert tone="info" title="Aucun candidat dans ce rayon">Élargissez le rayon, passez à « Tous les statuts » ou retirez une compétence.</Alert>
-            ) : null}
-            {ranked.map((c) => {
-              const route = c.route;
-              const assigned = c.assignment !== null;
-              const isHi = highlightedId === c.id;
-              return (
-                <article
-                  key={c.id} ref={(el) => { if (el) cardRefs.current.set(c.id, el); else cardRefs.current.delete(c.id); }}
-                  onClick={() => highlight(isHi ? null : c.id)}
-                  className={cn("cursor-pointer rounded-xl border bg-surface p-4 shadow-card transition-colors", isHi ? "border-primary ring-2 ring-primary/30" : "border-line")}
-                  aria-current={isHi || undefined}
-                >
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <Link href={`/staff/${c.id}`} onClick={(e) => e.stopPropagation()} className="font-medium hover:text-primary hover:underline">{c.fullName}</Link>
-                      <p className="text-xs text-muted">{[c.postalCode, c.city, c.region].filter(Boolean).join(" · ") || c.countryCode}</p>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <AvailabilityBadge status={c.availability} />
-                      <LocationBadge status={c.locationStatus} />
-                      {c.assignment ? <AssignmentBadge status={c.assignment.status} /> : null}
-                    </div>
-                  </div>
-
-                  {c.skills.length > 0 ? <div className="mt-2 flex flex-wrap gap-1">{c.skills.map((s) => <Badge key={s} tone="blue">{s}</Badge>)}</div> : null}
-
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                    <div className="text-sm">
-                      <p><span className="text-muted">À vol d’oiseau :</span> <strong>{formatDistance(c.straightLineM, unit)}</strong></p>
-                      <p className="text-xs text-muted">Distance directe, pas la route. Vérifiée le {c.locationUpdatedAt ? formatDateTime(c.locationUpdatedAt, timeZone) : "— (jamais)"}.</p>
-                    </div>
-                    <div>
-                      <p className="mb-0.5 text-xs font-medium uppercase tracking-wide text-muted">{TRANSPORT_LABELS[mode]}</p>
-                      <RouteInfo route={route} loading={routesLoading} unit={unit} supported={modeSupported} />
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex flex-wrap items-center gap-2" onClick={(e) => e.stopPropagation()}>
-                    <ContactButtons phone={c.phone} />
-                    <Button variant={compareIds.includes(c.id) ? "primary" : "secondary"} size="sm" aria-pressed={compareIds.includes(c.id)} onClick={() => toggleCompare(c.id)}>
-                      <GitCompare className="h-4 w-4" aria-hidden /> Comparer
-                    </Button>
-                    {isHi && route?.status === "ok" ? <Button variant="secondary" size="sm" onClick={() => void showRoute(c)}><RouteIcon className="h-4 w-4" aria-hidden /> Afficher le tracé</Button> : null}
-                    <Link href={`/staff/${c.id}`} className="text-sm text-primary hover:underline">Voir le profil</Link>
-                    {mission ? (
-                      assigned ? (
-                        <span className="ml-auto inline-flex items-center gap-1 text-sm text-success"><Check className="h-4 w-4" aria-hidden /> Déjà sélectionné</span>
-                      ) : (
-                        <Button size="sm" className="ml-auto" pending={selectingId === c.id} disabled={missionClosed} onClick={() => void select(c)}>
-                          {selectingId !== c.id ? <UserPlus className="h-4 w-4" aria-hidden /> : null} Sélectionner pour la mission
-                        </Button>
-                      )
-                    ) : null}
-                  </div>
-                </article>
-              );
-            })}
+        {neighbours ? grouped.towns.map((g) => (
+          <div key={g.town} className="card-surface overflow-hidden">
+            <h3 className="flex items-center justify-between gap-2 border-b border-line bg-surface-2 px-4 py-2 text-sm">
+              <span className="flex min-w-0 items-center gap-2 font-semibold"><Building2 className="h-4 w-4 shrink-0 text-primary" aria-hidden /><span className="truncate">{g.town === "Unknown" ? t("Ville inconnue", "Unknown town") : g.town}</span>{g.region ? <span className="hidden truncate text-xs font-normal text-muted sm:inline">· {g.region}</span> : null}</span>
+              <span className="flex shrink-0 items-center gap-2 text-xs text-muted"><span className="tabular-nums">{t("à partir de", "from")} {dist(g.minDistanceM, "km")}</span><Badge tone="blue">{g.items.length}</Badge></span>
+            </h3>
+            <ul className="divide-y divide-line">{g.items.map(row)}</ul>
           </div>
+        )) : neighbourCount > 0 ? (
+          <button type="button" onClick={() => setNeighbours(true)} className="w-full rounded-xl border border-dashed border-line px-4 py-3 text-sm text-muted hover:border-primary/40 hover:text-ink">{t(`${neighbourCount} personne(s) dans les villes voisines — afficher`, `${neighbourCount} people in neighbouring towns — show`)}</button>
         ) : null}
-      </div>
-
-      <p className="text-xs text-muted">
-        Localisations enregistrées dans les fiches (code postal / ville), jamais des positions en direct. Un point de départ approximatif peut donner une route différente de celle qui part du domicile réel.
-      </p>
+      </section>
     </div>
   );
 }

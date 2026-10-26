@@ -9,7 +9,7 @@ import { toCsv } from "./export";
 
 export const CSV_FIELDS = [
   "full_name", "staff_code", "phone", "email", "country_code",
-  "postal_code", "city", "region", "skills", "availability", "notes",
+  "postal_code", "city", "region", "skills", "availability", "notes", "weekly_hours",
 ] as const;
 export type CsvField = (typeof CSV_FIELDS)[number];
 
@@ -26,6 +26,7 @@ const HEADER_ALIASES: Record<string, CsvField> = {
   skills: "skills", competences: "skills", "compétences": "skills",
   availability: "availability", disponibilite: "availability", "disponibilité": "availability",
   notes: "notes", note: "notes", commentaire: "notes",
+  weekly_hours: "weekly_hours", hours: "weekly_hours", "weekly hours": "weekly_hours", "heures par semaine": "weekly_hours", heures: "weekly_hours",
 };
 
 export function normalizeHeader(h: string): CsvField | null {
@@ -73,6 +74,7 @@ export type ParsedStaffRow = {
   skills: string[];
   availability_status: AvailabilityStatus;
   notes: string | null;
+  weekly_hours: number | null;
 };
 
 export type RowIssue = { rowNumber: number; field: string; message: string; raw?: string };
@@ -200,6 +202,7 @@ export function parseStaffCsv(
       skills: parseSkills(get("skills")),
       availability_status: availability ?? "unknown",
       notes: get("notes").slice(0, 4000) || null,
+      weekly_hours: (() => { const n = Number(get("weekly_hours").replace(",", ".")); return get("weekly_hours") !== "" && Number.isFinite(n) && n >= 0 && n <= 168 ? n : null; })(),
     });
   });
 
@@ -210,8 +213,8 @@ export function importTemplateCsv(): string {
   return toCsv(
     CSV_FIELDS,
     [
-      ["Jane Doe", "S-001", "+44 7700 900123", "jane.doe@example.com", "GB", "SW1A 1AA", "London", "Greater London", "care;night-shift", "available", "Exemple"],
-      ["Paul Mbarga", "S-002", "677 00 00 00", "", "CM", "", "Douala", "Littoral", "driver", "unknown", ""],
+      ["Jane Doe", "S-001", "+44 7700 900123", "jane.doe@example.com", "GB", "SW1A 1AA", "London", "Greater London", "care assistant;night care", "available", "Exemple", "37.5"],
+      ["Paul Mbarga", "S-002", "677 00 00 00", "", "CM", "", "Douala", "Littoral", "housekeeper", "unknown", "", "20"],
     ],
     { bom: true },
   );

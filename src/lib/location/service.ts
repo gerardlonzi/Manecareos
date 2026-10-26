@@ -26,7 +26,7 @@ export function locationKey(q: GeocodeQuery): string {
 }
 
 export type ResolveOutcome =
-  | { ok: true; latitude: number; longitude: number; label: string; city: string | null; region: string | null; postalDisplay: string | null; provider: string }
+  | { ok: true; latitude: number; longitude: number; label: string; city: string | null; region: string | null; postalDisplay: string | null; provider: string; postal_derived?: true }
   | { ok: false; reason: string; message: string };
 
 /** Valide le code postal, géocode, et valide le résultat. N'invente jamais de coordonnées. */
@@ -57,6 +57,14 @@ export async function resolveLocation(q: GeocodeQuery): Promise<ResolveOutcome> 
   }
 
   if (!result.ok) return { ok: false, reason: result.reason, message: result.message };
+
+  // Ville seule : on propose le code postal dérivé (géocodage inverse), seulement s'il est valide pour le pays.
+  // Un code postal saisi par l'utilisateur n'est jamais écrasé.
+  let derived: string | null = null;
+  if (!postalDisplay && result.postalCode) {
+    const pc = normalizePostalCode(q.countryCode, result.postalCode);
+    if (pc.ok) derived = pc.display;
+  }
   return {
     ok: true,
     latitude: result.latitude,
@@ -64,8 +72,9 @@ export async function resolveLocation(q: GeocodeQuery): Promise<ResolveOutcome> 
     label: result.label,
     city: result.city,
     region: result.region,
-    postalDisplay,
+    postalDisplay: postalDisplay ?? derived,
     provider: result.provider,
+    ...(derived ? { postal_derived: true as const } : {}),
   };
 }
 

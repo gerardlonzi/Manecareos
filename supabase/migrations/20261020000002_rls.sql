@@ -1,4 +1,4 @@
--- StaffFlow — Row Level Security
+-- Manecare — Row Level Security
 -- Principe : un manager ne voit et ne modifie que ses propres lignes.
 
 alter table public.profiles enable row level security;

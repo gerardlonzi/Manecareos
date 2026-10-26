@@ -8,6 +8,7 @@ import { Alert, PageHeader } from "@/components/ui/card";
 import { missionLocation } from "@/components/missions/mission-card";
 import { RefreshButton } from "@/components/ui/refresh-button";
 import { requireSession } from "@/lib/auth";
+import { getT } from "@/lib/i18n-server";
 import { mapboxPublicToken } from "@/lib/env";
 import { getRoutingCapabilities } from "@/lib/routing/service";
 import type { MissionOverview } from "@/lib/types";
@@ -18,7 +19,7 @@ export const metadata = { title: "Trouver du staff pour la mission" };
 export default async function MissionStaffPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!uuidSchema.safeParse(id).success) notFound();
-  const { supabase, profile } = await requireSession();
+  const [{ supabase, profile }, { t }] = await Promise.all([requireSession(), getT()]);
   const { data } = await supabase.from("mission_overview").select("*").eq("id", id).maybeSingle();
   const m = data as MissionOverview | null;
   if (!m) notFound();
@@ -29,18 +30,18 @@ export default async function MissionStaffPage({ params }: { params: Promise<{ i
 
   return (
     <>
-      <Link href={`/missions/${m.id}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted hover:text-ink"><ArrowLeft className="h-4 w-4" aria-hidden /> Retour à la mission</Link>
+      <Link href={`/missions/${m.id}`} className="mb-3 inline-flex items-center gap-1 text-sm text-muted hover:text-ink"><ArrowLeft className="h-4 w-4" aria-hidden /> {t("Retour à la mission", "Back to assignment")}</Link>
       <PageHeader
         title={<span className="flex flex-wrap items-center gap-3">{m.title}<MissionStatusBadge status={m.status} /></span>}
-        description={`${missionLocation(m)} · ${m.selected_count} sur ${m.required_staff_count} sélectionné(s) · ${m.confirmed_count} confirmé(s)`}
-        actions={<><LinkButton href={`/missions/${m.id}`} variant="secondary">Retour à la mission</LinkButton>{m.status !== "cancelled" ? <LinkButton href={`/missions/${m.id}/edit`} variant="secondary"><Pencil className="h-4 w-4" aria-hidden /> Modifier</LinkButton> : null}<RefreshButton label="Actualiser" /></>}
+        description={`${missionLocation(m)} · ${m.selected_count}/${m.required_staff_count} ${t("sélectionné(s)", "selected")} · ${m.confirmed_count} ${t("confirmé(s)", "confirmed")}`}
+        actions={<><LinkButton href={`/missions/${m.id}`} variant="secondary">{t("Retour à la mission", "Back to assignment")}</LinkButton>{m.status !== "cancelled" ? <LinkButton href={`/missions/${m.id}/edit`} variant="secondary"><Pencil className="h-4 w-4" aria-hidden /> {t("Modifier", "Edit")}</LinkButton> : null}<RefreshButton /></>}
       />
 
-      {closed ? <Alert tone="warning" title="Mission clôturée" className="mb-4">La sélection de staff est désactivée pour une mission annulée ou terminée.</Alert> : null}
+      {closed ? <Alert tone="warning" title={t("Mission clôturée", "Assignment closed")} className="mb-4">{t("La sélection de staff est désactivée pour une mission annulée ou terminée.", "Staff selection is disabled for a cancelled or completed assignment.")}</Alert> : null}
 
       {!hasCoords ? (
-        <Alert tone="warning" title="Lieu de la mission non vérifié">
-          La recherche par distance est indisponible tant que le lieu n’a pas de coordonnées vérifiées. <Link className="underline" href={`/missions/${m.id}/edit`}>Modifier la mission et valider le lieu</Link>.
+        <Alert tone="warning" title={t("Lieu de la mission non vérifié", "Assignment location not verified")}>
+          {t("La recherche par distance est indisponible tant que le lieu n’a pas de coordonnées vérifiées.", "Distance search is unavailable until the location has verified coordinates.")} <Link className="underline" href={`/missions/${m.id}/edit`}>{t("Modifier la mission et valider le lieu", "Edit the assignment and validate the location")}</Link>.
         </Alert>
       ) : (
         <CandidateSearch

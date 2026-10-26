@@ -29,10 +29,20 @@ function fallbackProfile(user: User): Profile {
 export const getSession = cache(async (): Promise<Session | null> => {
   if (!isSupabaseConfigured()) return null;
   const supabase = await createClient();
-  const { data, error } = await supabase.auth.getUser();
-  if (error || !data.user) return null;
-  const { data: profile } = await supabase.from("profiles").select("*").eq("id", data.user.id).maybeSingle();
-  return { supabase, user: data.user, profile: (profile as Profile | null) ?? fallbackProfile(data.user) };
+  // getClaims : le JWT est vérifié localement (JWKS en cache) — bien plus rapide qu'un aller-retour getUser() à chaque page.
+  const { data: claimsData, error } = await supabase.auth.getClaims();
+  const claims = claimsData?.claims;
+  if (error || !claims?.sub) return null;
+  const user = {
+    id: claims.sub,
+    email: typeof claims.email === "string" ? claims.email : undefined,
+    user_metadata: (claims.user_metadata ?? {}) as Record<string, unknown>,
+    app_metadata: (claims.app_metadata ?? {}) as Record<string, unknown>,
+    aud: "authenticated",
+    created_at: "",
+  } as User;
+  const { data: profile } = await supabase.from("profiles").select("*").eq("id", user.id).maybeSingle();
+  return { supabase, user, profile: (profile as Profile | null) ?? fallbackProfile(user) };
 });
 
 /** Pour les pages et layouts privés. */

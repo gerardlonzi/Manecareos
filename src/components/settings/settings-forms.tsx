@@ -1,17 +1,22 @@
 "use client";
+import { friendlyError } from "@/lib/user-message";
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { changePassword, clearRouteCache, resetLocationPrefs, signOutOtherSessions, updateLocationPrefs, updateProfile } from "@/actions/settings";
-import { logout } from "@/actions/auth";
 import { PasswordInput } from "@/components/auth/password-input";
 import { Button } from "@/components/ui/button";
 import { Alert, Card, CardBody, CardHeader } from "@/components/ui/card";
-import { Field, Input, Select } from "@/components/ui/form";
+import { Field, Input } from "@/components/ui/form";
+import { Combobox } from "@/components/ui/combobox";
+import { countryName } from "@/config/countries";
+import { usePreferences } from "@/components/providers/preferences-provider";
 import { useUnsavedWarning } from "@/components/use-unsaved-warning";
 import { APP_CONFIG, TRANSPORT_LABELS } from "@/config/app";
 import { COUNTRY_LIST } from "@/config/countries";
 import type { Profile, TransportMode } from "@/lib/types";
+
+const TRANSPORT_EN: Record<string, string> = { driving: "Car", walking: "Walking", cycling: "Bike", public_transport: "Public transport" };
 
 function timeZones(current: string): string[] {
   let list: string[] = [];
@@ -23,6 +28,7 @@ function timeZones(current: string): string[] {
 
 export function ProfileForm({ profile }: { profile: Profile }) {
   const router = useRouter();
+  const { t, locale } = usePreferences();
   const [pending, start] = React.useTransition();
   const [v, setV] = React.useState({ full_name: profile.full_name, company_name: profile.company_name ?? "", country_code: profile.country_code, timezone: profile.timezone });
   const [saved, setSaved] = React.useState(v);
@@ -34,28 +40,28 @@ export function ProfileForm({ profile }: { profile: Profile }) {
 
   return (
     <Card>
-      <CardHeader title="Profil du manager" />
+      <CardHeader title={t("Profil du manager", "Manager profile")} />
       <CardBody>
         <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => {
           e.preventDefault();
           setErrors({});
           start(async () => {
             const r = await updateProfile(v);
-            if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(r.error); return; }
+            if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(friendlyError(r.error)); return; }
             setSaved(v); toast.success(r.message ?? "Enregistré"); router.refresh();
           });
         }}>
-          <Field id="full_name" label="Nom complet" error={errors.full_name} required><Input id="full_name" value={v.full_name} onChange={set("full_name")} /></Field>
-          <Field id="company_name" label="Entreprise" error={errors.company_name}><Input id="company_name" value={v.company_name} onChange={set("company_name")} /></Field>
-          <Field id="country_code" label="Pays principal" error={errors.country_code}>
-            <Select id="country_code" value={v.country_code} onChange={set("country_code")}>{COUNTRY_LIST.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</Select>
+          <Field id="full_name" label={t("Nom complet", "Full name")} error={errors.full_name} required><Input id="full_name" value={v.full_name} onChange={set("full_name")} /></Field>
+          <Field id="company_name" label={t("Entreprise", "Company")} error={errors.company_name}><Input id="company_name" value={v.company_name} onChange={set("company_name")} /></Field>
+          <Field id="country_code" label={t("Pays principal", "Primary country")} error={errors.country_code}>
+            <Combobox id="country_code" value={v.country_code} options={COUNTRY_LIST.map((c) => ({ value: c.code, label: countryName(c.code, locale), description: `+${c.dialCode}`, flag: c.code.toLowerCase() }))} onChange={(value) => setV((p) => ({ ...p, country_code: value }))} searchPlaceholder={t("Rechercher un pays…", "Search country…")} />
           </Field>
-          <Field id="timezone" label="Fuseau horaire" error={errors.timezone}>
-            <Select id="timezone" value={v.timezone} onChange={set("timezone")}>{zones.map((z) => <option key={z} value={z}>{z}</option>)}</Select>
+          <Field id="timezone" label={t("Fuseau horaire", "Time zone")} error={errors.timezone}>
+            <Combobox id="timezone" value={v.timezone} onChange={(x) => setV((p) => ({ ...p, timezone: x }))} options={zones.map((z) => ({ value: z, label: z.replace(/_/g, " ") }))} searchPlaceholder={t("Rechercher un fuseau…", "Search time zone…")} />
           </Field>
           <div className="flex justify-end gap-2 sm:col-span-2">
-            <Button variant="ghost" disabled={!dirty || pending} onClick={() => { setV(saved); setErrors({}); }}>Annuler</Button>
-            <Button type="submit" pending={pending} disabled={!dirty}>Enregistrer</Button>
+            <Button variant="ghost" disabled={!dirty || pending} onClick={() => { setV(saved); setErrors({}); }}>{t("Annuler", "Cancel")}</Button>
+            <Button type="submit" pending={pending} disabled={!dirty}>{t("Enregistrer", "Save")}</Button>
           </div>
         </form>
       </CardBody>
@@ -65,6 +71,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
 
 export function LocationPrefsForm({ profile, supportedModes, defaultCountry }: { profile: Profile; supportedModes: TransportMode[]; defaultCountry: string }) {
   const router = useRouter();
+  const { t, locale } = usePreferences();
   const [pending, start] = React.useTransition();
   const [resetting, startReset] = React.useTransition();
   const [clearing, startClear] = React.useTransition();
@@ -80,45 +87,45 @@ export function LocationPrefsForm({ profile, supportedModes, defaultCountry }: {
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader title="Préférences de recherche et de déplacement" description="Seuls les modes de transport réellement calculables par le fournisseur d’itinéraires sont proposés." />
+        <CardHeader title={t("Préférences de recherche et de déplacement", "Search and travel preferences")} description={t("Seuls les modes de transport réellement calculables par le fournisseur d’itinéraires sont proposés.", "Only transport modes supported by the configured routing provider are offered.")} />
         <CardBody>
           <form className="grid gap-4 sm:grid-cols-2" onSubmit={(e) => {
             e.preventDefault();
             setErrors({});
             start(async () => {
               const r = await updateLocationPrefs({ ...v, default_search_radius_km: Number(v.default_search_radius_km) });
-              if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(r.error); return; }
+              if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(friendlyError(r.error)); return; }
               setSaved(v); toast.success(r.message ?? "Enregistré"); router.refresh();
             });
           }}>
-            <Field id="p_country" label="Pays par défaut" error={errors.country_code}>
-              <Select id="p_country" value={v.country_code} onChange={set("country_code")}>{COUNTRY_LIST.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}</Select>
+            <Field id="p_country" label={t("Pays par défaut", "Default country")} error={errors.country_code}>
+              <Combobox id="p_country" value={v.country_code} options={COUNTRY_LIST.map((c) => ({ value: c.code, label: countryName(c.code, locale), description: `+${c.dialCode}` }))} onChange={(value) => setV((p) => ({ ...p, country_code: value }))} searchPlaceholder={t("Rechercher un pays…", "Search country…")} />
             </Field>
-            <Field id="p_radius" label="Rayon de recherche par défaut" error={errors.default_search_radius_km}>
-              <Select id="p_radius" value={v.default_search_radius_km} onChange={set("default_search_radius_km")}>{APP_CONFIG.search.radiiKm.map((r) => <option key={r} value={r}>{r} km</option>)}</Select>
+            <Field id="p_radius" label={t("Rayon de recherche par défaut", "Default search radius")} error={errors.default_search_radius_km}>
+              <Combobox id="p_radius" value={String(v.default_search_radius_km)} onChange={(x) => setV((p) => ({ ...p, default_search_radius_km: x }))} options={APP_CONFIG.search.radiiKm.map((r) => ({ value: String(r), label: `${r} km` }))} />
             </Field>
-            <Field id="p_avail" label="Filtre de disponibilité par défaut" error={errors.default_availability_filter}>
-              <Select id="p_avail" value={v.default_availability_filter} onChange={set("default_availability_filter")}><option value="available">Disponibles uniquement</option><option value="all">Tous les statuts</option></Select>
+            <Field id="p_avail" label={t("Filtre de disponibilité par défaut", "Default availability filter")} error={errors.default_availability_filter}>
+              <Combobox id="p_avail" value={v.default_availability_filter} onChange={(x) => setV((p) => ({ ...p, default_availability_filter: x as "available" | "all" }))} options={[{ value: "available", label: t("Disponibles uniquement", "Available only") }, { value: "all", label: t("Tous les statuts", "All statuses") }]} />
             </Field>
-            <Field id="p_mode" label="Mode de transport par défaut" error={errors.default_transport_mode}>
-              <Select id="p_mode" value={v.default_transport_mode} onChange={set("default_transport_mode")}>{modes.map((m) => <option key={m} value={m}>{TRANSPORT_LABELS[m]}</option>)}</Select>
+            <Field id="p_mode" label={t("Mode de transport par défaut", "Default transport mode")} error={errors.default_transport_mode}>
+              <Combobox id="p_mode" value={v.default_transport_mode} onChange={(x) => setV((p) => ({ ...p, default_transport_mode: x as TransportMode }))} options={modes.map((m) => ({ value: m, label: t(TRANSPORT_LABELS[m], TRANSPORT_EN[m] ?? m) }))} />
             </Field>
-            <Field id="p_unit" label="Unité de distance" error={errors.distance_unit}>
-              <Select id="p_unit" value={v.distance_unit} onChange={set("distance_unit")}><option value="km">Kilomètres</option><option value="mi">Miles</option></Select>
+            <Field id="p_unit" label={t("Unité de distance", "Distance unit")} error={errors.distance_unit}>
+              <Combobox id="p_unit" value={v.distance_unit} onChange={(x) => setV((p) => ({ ...p, distance_unit: x as "km" | "mi" }))} options={[{ value: "km", label: t("Kilomètres", "Kilometres") }, { value: "mi", label: t("Miles", "Miles") }]} />
             </Field>
             <div className="sm:col-span-2">
               <label className="flex items-start gap-3 text-sm">
                 <input type="checkbox" className="mt-1 h-4 w-4" checked={v.allow_fallback_estimates} onChange={(e) => setV((p) => ({ ...p, allow_fallback_estimates: e.target.checked }))} />
                 <span>
-                  <span className="font-medium">Autoriser les estimations approximatives de repli</span>
-                  <span className="block text-muted">Si le fournisseur d’itinéraires échoue, un temps à vitesse moyenne est affiché, clairement étiqueté « approximation » (jamais pour les transports en commun). Désactivé par défaut.</span>
+                  <span className="font-medium">{t("Autoriser les estimations approximatives de repli", "Allow approximate fallback estimates")}</span>
+                  <span className="block text-muted">{t("Si le fournisseur d’itinéraires échoue, un temps à vitesse moyenne est affiché, clairement étiqueté « approximation » (jamais pour les transports en commun). Désactivé par défaut.", "If routing fails, an average-speed estimate may be shown and clearly labelled as approximate (never for public transport). Off by default.")}</span>
                 </span>
               </label>
             </div>
             <div className="flex flex-wrap justify-end gap-2 sm:col-span-2">
               <Button variant="ghost" pending={resetting} onClick={() => startReset(async () => {
                 const r = await resetLocationPrefs();
-                if (r.ok) { toast.success(r.message ?? "Réinitialisé"); router.refresh(); } else toast.error(r.error);
+                if (r.ok) { toast.success(r.message ?? "Réinitialisé"); router.refresh(); } else toast.error(friendlyError(r.error));
               })}>Réinitialiser les valeurs par défaut</Button>
               <Button type="submit" pending={pending} disabled={!dirty}>Enregistrer les préférences</Button>
             </div>
@@ -131,7 +138,7 @@ export function LocationPrefsForm({ profile, supportedModes, defaultCountry }: {
         <CardBody>
           <Button variant="secondary" pending={clearing} onClick={() => startClear(async () => {
             const r = await clearRouteCache();
-            if (r.ok) toast.success(r.message ?? "Cache vidé"); else toast.error(r.error);
+            if (r.ok) toast.success(r.message ?? "Cache vidé"); else toast.error(friendlyError(r.error));
           })}>Vider le cache d’itinéraires</Button>
         </CardBody>
       </Card>
@@ -142,7 +149,6 @@ export function LocationPrefsForm({ profile, supportedModes, defaultCountry }: {
 export function SecurityForms() {
   const [pending, start] = React.useTransition();
   const [others, startOthers] = React.useTransition();
-  const [out, startOut] = React.useTransition();
   const [v, setV] = React.useState({ password: "", confirm: "" });
   const [errors, setErrors] = React.useState<Record<string, string>>({});
 
@@ -156,7 +162,7 @@ export function SecurityForms() {
             setErrors({});
             start(async () => {
               const r = await changePassword(v);
-              if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(r.error); return; }
+              if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(friendlyError(r.error)); return; }
               setV({ password: "", confirm: "" }); toast.success(r.message ?? "Mot de passe modifié");
             });
           }}>
@@ -174,13 +180,12 @@ export function SecurityForms() {
       <Card>
         <CardHeader title="Sessions" />
         <CardBody className="space-y-3">
-          <Alert tone="info">La session de ce navigateur est conservée par Supabase Auth. Vous pouvez fermer toutes les autres sessions ouvertes sur d’autres appareils.</Alert>
+          <Alert tone="info">La session de ce navigateur est conservée de manière sécurisée. Vous pouvez fermer les autres sessions ouvertes sur vos appareils.</Alert>
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" pending={others} onClick={() => startOthers(async () => {
               const r = await signOutOtherSessions();
-              if (r.ok) toast.success(r.message ?? "Fait"); else toast.error(r.error);
+              if (r.ok) toast.success(r.message ?? "Fait"); else toast.error(friendlyError(r.error));
             })}>Fermer les autres sessions</Button>
-            <Button variant="outlineDanger" pending={out} onClick={() => startOut(async () => { await logout(); })}>Se déconnecter</Button>
           </div>
         </CardBody>
       </Card>

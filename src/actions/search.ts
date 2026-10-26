@@ -1,9 +1,10 @@
 "use server";
 
 import { logActivity } from "@/lib/activity";
+import { mapWithConcurrency } from "@/lib/concurrency";
 import { haversineMeters, isValidCoordinate } from "@/lib/geo/haversine";
 import { resolveLocation } from "@/lib/location/service";
-import { approximateEstimate } from "@/lib/routing/fallback";
+import { approximateEstimate, trainEstimate } from "@/lib/routing/fallback";
 import { getRouteEstimates, getRoutingCapabilities, getRoutingProvider } from "@/lib/routing/service";
 import type { RouteEstimate } from "@/lib/routing/types";
 import { findNearbyCandidates, resolveTarget, searchParamsSchema } from "@/lib/search";
@@ -64,7 +65,7 @@ export async function estimateRoutes(raw: unknown): Promise<ActionResult<{ estim
       let est: RouteEstimate | undefined = map.get(o.id);
       if (!est) continue; // au-delà du lot borné : « non calculé », jamais inventé
       // Repli approximatif : uniquement si le manager l'a autorisé, étiqueté « approximate », jamais pour un trajet réel.
-      if (est.status !== "ok" && profile.allow_fallback_estimates) {
+      if (est.status !== "ok" && est.status !== "approximate" && profile.allow_fallback_estimates) {
         const approx = approximateEstimate(p.data.mode as TransportMode, { straightLineM: haversineMeters(o, t.origin) });
         if (approx) est = approx;
       }
@@ -109,3 +110,58 @@ export async function geocodeSearchPoint(raw: unknown): Promise<ActionResult<{ l
   });
 }
 
+
+const REAL_MODES = ["driving", "walking", "cycling"] as const;
+type RealMode = (typeof REAL_MODES)[number];
+
+export type TravelOptions = {
+  /** Une entrée par mode : itinéraire réel, repli explicitement autorisé, échec typé, ou estimation train (kind "train_estimate"). */
+  options: Partial<Record<TransportMode, RouteEstimate>>;
+  /** Tracés réels [lon, lat][] ; null quand le fournisseur n'en renvoie pas (jamais une ligne droite déguisée). */
+  geometry: Partial<Record<RealMode, [number, number][] | null>>;
+  straightLineM: number;
+};
+
+/**
+ * Tous les modes de déplacement entre un staff et une cible, plus les tracés réels pour dessiner la route.
+ * Le train est une ESTIMATION par vitesse moyenne supposée (jamais un horaire) : voir `kind: "train_estimate"`.
+ * Cible et staff sont relus sous RLS, comme dans estimateRoutes / getRouteGeometry.
+ */
+export async function getTravelOptions(raw: unknown): Promise<ActionResult<TravelOptions>> {
+  return withSession(async ({ supabase, user, profile }) => {
+    const p = z.object({ target: estimateSchema.shape.target, staffId: z.uuid() }).safeParse(raw);
+    if (!p.success) return { ok: false, error: "Requête invalide" };
+    const t = await resolveTarget(supabase, p.data.target as SearchTarget);
+    if (!t.ok) return { ok: false, error: t.error };
+
+    const { data } = await supabase
+      .from("staff").select("id, latitude, longitude")
+      .eq("id", p.data.staffId).eq("location_status", "resolved").is("archived_at", null).maybeSingle();
+    if (!data || !isValidCoordinate(data.latitude, data.longitude)) return { ok: false, error: "Staff introuvable ou non localisé." };
+    const origin = { id: data.id as string, latitude: data.latitude as number, longitude: data.longitude as number };
+    const straightLineM = haversineMeters(origin, t.origin);
+    if (straightLineM === null) return { ok: false, error: "Staff introuvable ou non localisé." };
+
+    const options: Partial<Record<TransportMode, RouteEstimate>> = {};
+    const provider = getRoutingProvider();
+    const geometry: TravelOptions["geometry"] = {};
+
+    await mapWithConcurrency([...REAL_MODES], 3, async (mode: RealMode) => {
+      const map = await getRouteEstimates(supabase, user.id, [origin], t.origin, mode);
+      let est: RouteEstimate | undefined = map.get(origin.id);
+      if (est && est.status !== "ok" && est.status !== "approximate" && profile.allow_fallback_estimates) {
+        est = approximateEstimate(mode, { straightLineM }) ?? est;
+      }
+      if (est) options[mode] = est;
+      // Pas de jeton : inutile d'appeler le fournisseur, et surtout pas de tracé inventé.
+      const g = provider.isConfigured() && provider.supportedModes().includes(mode)
+        ? await provider.routeGeometry(origin, t.origin, mode)
+        : null;
+      geometry[mode] = g && g.coordinates.length >= 2 ? g.coordinates : null;
+    });
+
+    const train = trainEstimate(straightLineM);
+    if (train) options.public_transport = train;
+    return { ok: true, data: { options, geometry, straightLineM } };
+  });
+}

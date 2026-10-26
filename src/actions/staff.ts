@@ -7,6 +7,7 @@ import { logActivity, notify } from "@/lib/activity";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { computeLocation, type LocationPrev } from "@/lib/location/apply";
 import { resolveLocation, resolveMany } from "@/lib/location/service";
+import { PHOTO_BUCKET, PHOTO_MAX_BYTES, PHOTO_URL_TTL_SECONDS, detectPhotoType } from "@/lib/photos";
 import { normalizePhone } from "@/lib/phone";
 import type { ActionResult, AvailabilityStatus, Staff } from "@/lib/types";
 import { fieldErrorsFrom, locationInputSchema, staffInputSchema, uuidList, uuidSchema } from "@/lib/validation";
@@ -26,7 +27,7 @@ export async function saveStaff(raw: unknown, id?: string): Promise<ActionResult
 
     let phone: string | null = null;
     if (input.phone) {
-      const p = normalizePhone(input.phone, input.country_code);
+      const p = normalizePhone(input.phone, input.phone_country_code ?? input.country_code);
       if (!p.ok) return { ok: false, error: "Formulaire invalide", fieldErrors: { phone: p.reason } };
       phone = p.e164;
     }
@@ -41,14 +42,16 @@ export async function saveStaff(raw: unknown, id?: string): Promise<ActionResult
     const loc = await computeLocation(input, prev as LocationPrev | null);
     if (!loc.ok) return { ok: false, error: "Localisation invalide", fieldErrors: { [loc.field]: loc.message } };
 
+    const generatedCode = `STF-${crypto.randomUUID().replaceAll("-", "").slice(0, 8).toUpperCase()}`;
     const row = {
-      staff_code: input.staff_code,
+      staff_code: input.staff_code || (id ? prev?.staff_code : generatedCode) || generatedCode,
       full_name: input.full_name,
       phone,
       email: input.email,
       skills: input.skills,
       availability_status: input.availability_status,
       notes: input.notes,
+      weekly_hours: input.weekly_hours,
       ...loc.fields,
     };
 
@@ -165,7 +168,7 @@ export async function markContacted(staffId: string): Promise<ActionResult> {
   });
 }
 
-export type LocationPreview = { label: string; city: string | null; region: string | null; postalDisplay: string | null; provider: string };
+export type LocationPreview = { label: string; city: string | null; region: string | null; postalDisplay: string | null; provider: string; postalDerived: boolean };
 
 /** Aperçu de géocodage pour le bouton « Valider la localisation ». N'enregistre rien. */
 export async function previewLocation(raw: unknown): Promise<ActionResult<LocationPreview>> {
@@ -174,7 +177,7 @@ export async function previewLocation(raw: unknown): Promise<ActionResult<Locati
     if (!p.success) return { ok: false, error: "Localisation invalide", fieldErrors: fieldErrorsFrom(p.error) };
     const r = await resolveLocation({ countryCode: p.data.country_code, postalCode: p.data.postal_code, city: p.data.city, region: p.data.region });
     if (!r.ok) return { ok: false, error: r.message };
-    return { ok: true, data: { label: r.label, city: r.city, region: r.region, postalDisplay: r.postalDisplay, provider: r.provider } };
+    return { ok: true, data: { label: r.label, city: r.city, region: r.region, postalDisplay: r.postalDisplay, provider: r.provider, postalDerived: r.postal_derived === true } };
   });
 }
 
@@ -231,5 +234,66 @@ export async function clearStaffLocation(id: string): Promise<ActionResult> {
     revalidatePath(`/staff/${id}`);
     refresh();
     return { ok: true, message: "Localisation effacée" };
+  });
+}
+
+/**
+ * Téléverse la photo d'un staff (champ « photo », 2 Mo max, JPEG/PNG/WebP vérifiés par les octets de tête).
+ * Le propriétaire n'est jamais lu depuis le client : le chemin est `<user.id>/<staffId>.<ext>` et le staff est relu sous RLS.
+ */
+export async function uploadStaffPhoto(staffId: string, formData: FormData): Promise<ActionResult<{ photoUrl: string }>> {
+  return withSession(async ({ supabase, user }) => {
+    if (!uuidSchema.safeParse(staffId).success) return { ok: false, error: "Identifiant invalide" };
+    const file = formData.get("photo");
+    if (!(file instanceof File) || file.size === 0) return { ok: false, error: "Aucune photo reçue" };
+    if (file.size > PHOTO_MAX_BYTES) return { ok: false, error: "Photo trop volumineuse (2 Mo maximum)" };
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (bytes.length > PHOTO_MAX_BYTES) return { ok: false, error: "Photo trop volumineuse (2 Mo maximum)" };
+    const type = detectPhotoType(bytes);
+    if (!type) return { ok: false, error: "Format de photo non pris en charge (JPEG, PNG ou WebP)" };
+
+    const { data: staff } = await supabase.from("staff").select("id, full_name, photo_path").eq("id", staffId).maybeSingle();
+    if (!staff) return { ok: false, error: "Staff introuvable" };
+
+    const path = `${user.id}/${staffId}.${type.ext}`;
+    const bucket = supabase.storage.from(PHOTO_BUCKET);
+    const { error: upErr } = await bucket.upload(path, bytes, { contentType: type.mime, upsert: true, cacheControl: "3600" });
+    if (upErr) return { ok: false, error: "Téléversement impossible. Réessayez." };
+
+    const { error: dbErr } = await supabase.from("staff").update({ photo_path: path }).eq("id", staffId);
+    if (dbErr) {
+      if (staff.photo_path !== path) await bucket.remove([path]);
+      return { ok: false, error: "Enregistrement impossible. Réessayez." };
+    }
+    // Ancienne photo d'un autre format (ex. .png remplacé par .jpg) : on ne laisse pas d'orphelin.
+    if (staff.photo_path && staff.photo_path !== path && staff.photo_path.startsWith(`${user.id}/`)) {
+      await bucket.remove([staff.photo_path]);
+    }
+
+    await logActivity(supabase, user.id, { event_type: "staff_updated", staff_id: staffId, description: `${staff.full_name} : photo mise à jour` });
+    revalidatePath(`/staff/${staffId}`);
+    refresh();
+    const { data: signed } = await bucket.createSignedUrl(path, PHOTO_URL_TTL_SECONDS);
+    return { ok: true, data: { photoUrl: signed?.signedUrl ?? "" }, message: "Photo mise à jour" };
+  });
+}
+
+export async function removeStaffPhoto(staffId: string): Promise<ActionResult> {
+  return withSession(async ({ supabase, user }) => {
+    if (!uuidSchema.safeParse(staffId).success) return { ok: false, error: "Identifiant invalide" };
+    const { data: staff } = await supabase.from("staff").select("id, full_name, photo_path").eq("id", staffId).maybeSingle();
+    if (!staff) return { ok: false, error: "Staff introuvable" };
+    if (!staff.photo_path) return { ok: true, message: "Aucune photo à supprimer" };
+
+    const { error } = await supabase.from("staff").update({ photo_path: null }).eq("id", staffId);
+    if (error) return { ok: false, error: "Suppression impossible. Réessayez." };
+    // Seuls les objets du dossier de l'utilisateur sont supprimés (la RLS Storage l'impose aussi).
+    if (staff.photo_path.startsWith(`${user.id}/`)) await supabase.storage.from(PHOTO_BUCKET).remove([staff.photo_path]);
+
+    await logActivity(supabase, user.id, { event_type: "staff_updated", staff_id: staffId, description: `${staff.full_name} : photo supprimée` });
+    revalidatePath(`/staff/${staffId}`);
+    refresh();
+    return { ok: true, message: "Photo supprimée" };
   });
 }

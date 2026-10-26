@@ -19,7 +19,7 @@ export default function LocationMap({ latitude, longitude, label, token, classNa
         mapboxgl.accessToken = token;
         map = new mapboxgl.Map({ container: ref.current, style: "mapbox://styles/mapbox/streets-v12", center: [longitude, latitude], zoom: 12 });
         map.addControl(new mapboxgl.NavigationControl({ showCompass: false }), "top-right");
-        new mapboxgl.Marker({ color: "#3157d5" }).setLngLat([longitude, latitude]).setPopup(new mapboxgl.Popup({ offset: 24 }).setText(label)).addTo(map);
+        new mapboxgl.Marker({ color: "#1d3b5c" }).setLngLat([longitude, latitude]).setPopup(new mapboxgl.Popup({ offset: 24 }).setText(label)).addTo(map);
         map.on("error", () => setFailed(true));
       } catch {
         setFailed(true);

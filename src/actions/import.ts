@@ -48,6 +48,7 @@ const rowSchema = z.object({
   skills: z.array(z.string().max(60)).max(30),
   availability_status: z.enum(["available", "unavailable", "unknown"]),
   notes: z.string().max(4000).nullable(),
+  weekly_hours: z.number().min(0).max(168).nullable().optional(),
 });
 
 export async function importStaffBatch(raw: unknown): Promise<ActionResult<ImportBatchResult>> {
@@ -93,7 +94,7 @@ export async function importStaffBatch(raw: unknown): Promise<ActionResult<Impor
         record: {
           owner_id: user.id,
           staff_code: v.row.staff_code || null, full_name: v.row.full_name, phone: v.phone, email: v.email,
-          skills: normalizeSkills(v.row.skills), availability_status: v.row.availability_status, notes: v.row.notes || null,
+          skills: normalizeSkills(v.row.skills), availability_status: v.row.availability_status, notes: v.row.notes || null, weekly_hours: v.row.weekly_hours ?? null,
           ...loc.fields,
         },
       });

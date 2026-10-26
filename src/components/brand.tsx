@@ -1,12 +1,18 @@
+import Image from "next/image";
 import Link from "next/link";
-import { MapPinned } from "lucide-react";
 import { APP_CONFIG } from "@/config/app";
 
-export function Brand({ href = "/" }: { href?: string }) {
+/** Marque Manecare : logo Maneliza Care + nom de la plateforme. */
+export function Brand({ href = "/", compact = false, inverse = false, size = 36 }: { href?: string; compact?: boolean; inverse?: boolean; size?: number }) {
   return (
-    <Link href={href} className="inline-flex items-center gap-2 font-semibold tracking-tight">
-      <span className="grid h-8 w-8 place-items-center rounded-lg bg-primary text-white" aria-hidden><MapPinned className="h-4.5 w-4.5" /></span>
-      <span className="text-lg">{APP_CONFIG.name}</span>
+    <Link href={href} className="inline-flex min-w-0 items-center gap-2.5 rounded-lg focus-visible:outline-offset-4" aria-label={`${APP_CONFIG.name} — ${APP_CONFIG.company}`}>
+      <Image src="/brand/maneliza-mark.png" alt="" width={size} height={size} priority className="shrink-0 rounded-full" style={{ width: size, height: size }} />
+      {compact ? null : (
+        <span className="min-w-0 leading-tight">
+          <span className={`block truncate text-[17px] font-bold tracking-tight ${inverse ? "text-white" : "text-ink"}`}>{APP_CONFIG.name}</span>
+          <span className={`block truncate text-[10px] font-semibold uppercase tracking-[.14em] ${inverse ? "text-white/60" : "text-muted"}`}>{APP_CONFIG.company}</span>
+        </span>
+      )}
     </Link>
   );
 }

@@ -1,15 +1,17 @@
 import Link from "next/link";
-import { Activity, X } from "lucide-react";
-import { Button, LinkButton } from "@/components/ui/button";
+import { Activity, BriefcaseBusiness, Download, MapPin, Upload, UserCheck, Users } from "lucide-react";
 import { Alert, EmptyState, PageHeader } from "@/components/ui/card";
-import { Input, Select } from "@/components/ui/form";
+import { ActivityFilters } from "@/components/activity/activity-filters";
 import { Pagination } from "@/components/ui/pagination";
 import { RefreshButton } from "@/components/ui/refresh-button";
 import { APP_CONFIG } from "@/config/app";
-import { EVENT_LABELS } from "@/lib/activity";
+import { EVENT_LABELS, EVENT_LABELS_EN } from "@/lib/activity";
+import { getLocale } from "@/lib/i18n-server";
+import { describeActivity } from "@/lib/messages";
+import { T } from "@/components/providers/t";
 import { requireSession } from "@/lib/auth";
 import type { ActivityLog } from "@/lib/types";
-import { formatDateTime, sanitizeSearchTerm, toQuery } from "@/lib/utils";
+import { sanitizeSearchTerm, toQuery } from "@/lib/utils";
 import { uuidSchema } from "@/lib/validation";
 
 export const metadata = { title: "Activité" };
@@ -54,54 +56,71 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
   const hasFilters = Boolean(type || from || to || missionId || staffQ);
   const hrefFor = (p: number) => `/activity${toQuery({ type, from, to, mission: missionId, staff: staffQ, page: p <= 1 ? "" : p })}`;
 
+  const loc = (await getLocale());
+  const dayKey = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, dateStyle: "short" }).format(new Date(iso));
+  const dayLabel = (iso: string) => new Intl.DateTimeFormat(loc === "fr" ? "fr-FR" : "en-GB", { timeZone: tz, weekday: "long", day: "numeric", month: "long" }).format(new Date(iso));
+  const timeOf = (iso: string) => new Intl.DateTimeFormat(loc === "fr" ? "fr-FR" : "en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit" }).format(new Date(iso));
+  const groups: { key: string; label: string; items: ActivityLog[] }[] = [];
+  for (const l of rows) {
+    const k = dayKey(l.created_at);
+    const g = groups[groups.length - 1];
+    if (g && g.key === k) g.items.push(l); else groups.push({ key: k, label: dayLabel(l.created_at), items: [l] });
+  }
+
   return (
     <>
-      <PageHeader title="Activité" description="Journal en ajout seul : les événements ne peuvent être ni modifiés ni supprimés depuis l’application." actions={<RefreshButton />} />
-
-      <form method="get" role="search" aria-label="Filtres d’activité" className="mb-4 space-y-3 rounded-xl border border-line bg-surface p-4 shadow-card">
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <Select name="type" defaultValue={type} aria-label="Type d’événement">
-            <option value="">Tous les événements</option>
-            {Object.entries(EVENT_LABELS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
-          </Select>
-          <Input name="from" type="date" defaultValue={from} aria-label="Du" />
-          <Input name="to" type="date" defaultValue={to} aria-label="Au" />
-          <Select name="mission" defaultValue={missionId} aria-label="Mission">
-            <option value="">Toutes les missions</option>
-            {((missions ?? []) as { id: string; title: string }[]).map((m) => <option key={m.id} value={m.id}>{m.title}</option>)}
-          </Select>
-          <Input name="staff" defaultValue={staffQ} aria-label="Nom du staff" placeholder="Nom du staff" />
-        </div>
-        <div className="flex justify-end gap-2">
-          <Button type="submit" variant="secondary" size="sm">Filtrer</Button>
-          <LinkButton href="/activity" variant="ghost" size="sm"><X className="h-4 w-4" aria-hidden /> Effacer les filtres</LinkButton>
-        </div>
-      </form>
-
-      {error ? <Alert tone="danger" title="Lecture impossible">Le journal n’a pas pu être chargé.</Alert> : null}
-      {!error && rows.length === 0 ? (
-        <EmptyState icon={<Activity className="h-8 w-8" aria-hidden />} title={hasFilters ? "Aucun événement" : "Aucune activité pour l’instant"} description={hasFilters ? "Aucun événement ne correspond à ces filtres." : "Les actions importantes apparaîtront ici."} />
-      ) : null}
-
-      {rows.length > 0 ? (
-        <>
-          <ul className="divide-y divide-line rounded-xl border border-line bg-surface shadow-card">
-            {rows.map((l) => (
-              <li key={l.id} className="flex flex-wrap items-start justify-between gap-2 px-4 py-3 text-sm">
-                <div className="min-w-0">
-                  <p>{l.description}</p>
-                  <p className="text-xs text-muted">{EVENT_LABELS[l.event_type] ?? l.event_type} · {formatDateTime(l.created_at, tz)}</p>
-                </div>
-                <div className="flex gap-3 text-xs">
-                  {l.staff_id ? <Link className="text-primary hover:underline" href={`/staff/${l.staff_id}`}>Voir le staff</Link> : null}
-                  {l.mission_id ? <Link className="text-primary hover:underline" href={`/missions/${l.mission_id}`}>Voir la mission</Link> : null}
-                </div>
-              </li>
-            ))}
-          </ul>
-          <Pagination page={page} pageSize={pageSize} total={count ?? 0} hrefFor={hrefFor} />
-        </>
-      ) : null}
+      <PageHeader
+        title={<T fr="Activité" en="Activity" />}
+        description={<T fr="Journal en ajout seul : les événements ne peuvent être ni modifiés ni supprimés." en="Append-only log: events cannot be edited or deleted." />}
+        actions={<RefreshButton />}
+        toolbar={<ActivityFilters type={type} from={from} to={to} missionId={missionId} staffQ={staffQ} missions={((missions ?? []) as { id: string; title: string }[])} />}
+      />
+      <div className="py-5">
+        {error ? <Alert tone="danger" title={<T fr="Lecture impossible" en="Unable to load activity" />}><T fr="Le journal n’a pas pu être chargé." en="The activity log could not be loaded." /></Alert> : null}
+        {!error && rows.length === 0 ? (
+          <EmptyState icon={<Activity className="h-8 w-8" aria-hidden />} title={hasFilters ? <T fr="Aucun événement" en="No events" /> : <T fr="Aucune activité pour l’instant" en="No activity yet" />} description={hasFilters ? <T fr="Aucun événement ne correspond à ces filtres." en="No events match these filters." /> : <T fr="Les actions importantes apparaîtront ici." en="Important actions will appear here." />} />
+        ) : null}
+        {rows.length > 0 ? (
+          <>
+            <div className="space-y-6">
+              {groups.map((g) => (
+                <section key={g.key} aria-label={g.label}>
+                  <h2 className="mb-2 text-xs font-bold uppercase tracking-wider text-muted first-letter:uppercase">{g.label}</h2>
+                  <ol className="stagger divide-y divide-line overflow-hidden rounded-[var(--radius-card)] border border-line bg-surface shadow-card">
+                    {g.items.map((l) => {
+                      const Icon = iconFor(l.event_type);
+                      return (
+                        <li key={l.id} className="flex items-start gap-3 px-4 py-3 text-sm">
+                          <span className="mt-0.5 grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-primary-soft text-primary"><Icon className="h-4 w-4" aria-hidden /></span>
+                          <div className="min-w-0 flex-1">
+                            <p className="leading-snug">{describeActivity(l, loc)}</p>
+                            <p className="mt-0.5 text-xs text-muted"><T fr={EVENT_LABELS[l.event_type] ?? l.event_type} en={EVENT_LABELS_EN[l.event_type] ?? l.event_type} /> · {timeOf(l.created_at)}</p>
+                          </div>
+                          <div className="flex shrink-0 flex-wrap justify-end gap-1.5 text-xs">
+                            {l.staff_id ? <Link className="rounded-md bg-surface-2 px-2 py-1 font-medium text-primary hover:bg-primary-soft" href={`/staff/${l.staff_id}`}><T fr="Voir le staff" en="View staff" /></Link> : null}
+                            {l.mission_id ? <Link className="rounded-md bg-surface-2 px-2 py-1 font-medium text-primary hover:bg-primary-soft" href={`/missions/${l.mission_id}`}><T fr="Voir la mission" en="View assignment" /></Link> : null}
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ol>
+                </section>
+              ))}
+            </div>
+            <Pagination page={page} pageSize={pageSize} total={count ?? 0} basePath="/activity" params={{ type, from, to, mission: missionId, staff: staffQ }} />
+          </>
+        ) : null}
+      </div>
     </>
   );
+}
+
+function iconFor(type: string) {
+  if (type.startsWith("staff")) return Users;
+  if (type.startsWith("mission") || type.startsWith("assignment")) return BriefcaseBusiness;
+  if (type.startsWith("import")) return Upload;
+  if (type.startsWith("export")) return Download;
+  if (type.startsWith("location")) return MapPin;
+  if (type.startsWith("availability")) return UserCheck;
+  return Activity;
 }

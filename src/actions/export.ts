@@ -17,11 +17,11 @@ import { withSession } from "./helpers";
 type CsvFile = { filename: string; csv: string; count: number };
 const stamp = () => new Date().toISOString().slice(0, 10);
 
-const STAFF_COLUMNS = ["full_name", "staff_code", "phone", "email", "country_code", "postal_code", "city", "region", "skills", "availability", "notes", "location_status", "last_location_verification"] as const;
+const STAFF_COLUMNS = ["full_name", "staff_code", "phone", "email", "country_code", "postal_code", "city", "region", "skills", "availability", "notes", "weekly_hours", "location_status", "last_location_verification"] as const;
 
 const staffRow = (s: Staff) => [
   s.full_name, s.staff_code, s.phone, s.email, s.country_code, s.postal_code, s.city, s.region,
-  s.skills.join(";"), s.availability_status, s.notes, s.location_status, s.location_updated_at,
+  s.skills.join(";"), s.availability_status, s.notes, s.weekly_hours, s.location_status, s.location_updated_at,
 ];
 
 /** Exporte tous les staff, les staff filtrés ou une sélection. Rien n'est tronqué silencieusement : au-delà de la limite, l'export est refusé. */
@@ -45,6 +45,7 @@ export async function exportStaffCsv(raw: unknown): Promise<ActionResult<CsvFile
     if ((count ?? 0) > limit) return { ok: false, error: `Trop d'enregistrements (${count}). Affinez les filtres : la limite est de ${limit} par export.` };
 
     const rows = (data ?? []) as Staff[];
+    if (rows.length === 0) return { ok: false, error: "Rien à exporter : aucune donnée." };
     const csv = toCsv(STAFF_COLUMNS, rows.map(staffRow), { bom: true });
     await logActivity(supabase, user.id, { event_type: "export_completed", description: `Export CSV staff (${p.data.scope}) : ${rows.length} ligne(s)`, metadata: { scope: p.data.scope, count: rows.length } });
     return { ok: true, data: { filename: `staff-${p.data.scope}-${stamp()}.csv`, csv, count: rows.length } };
@@ -97,6 +98,7 @@ export async function exportCandidatesCsv(raw: unknown): Promise<ActionResult<Cs
         near.data.mission ? `mission: ${near.data.mission.title}` : `point de recherche: ${near.data.origin.label}`,
       ];
     });
+    if (rows.length === 0) return { ok: false, error: "Rien à exporter : aucune donnée." };
     const csv = toCsv(headers, rows, { bom: true });
     await logActivity(supabase, user.id, {
       event_type: "export_completed", mission_id: near.data.mission?.id ?? null,
@@ -121,6 +123,7 @@ export async function exportMissionStaffCsv(missionId: string): Promise<ActionRe
       const s = Array.isArray(r.staff) ? r.staff[0] : r.staff;
       return [s?.full_name, s?.staff_code, s?.phone, s?.email, r.assignment_status, r.selected_at, s?.last_contacted_at, s?.availability_status, r.notes];
     });
+    if (rows.length === 0) return { ok: false, error: "Rien à exporter : aucune donnée." };
     const csv = toCsv(["full_name", "staff_code", "phone", "email", "assignment_status", "selected_at", "last_contacted_at", "availability", "assignment_notes"], rows, { bom: true });
     await logActivity(supabase, user.id, { event_type: "export_completed", mission_id: missionId, description: `Export CSV du staff de « ${m.title} » : ${rows.length} ligne(s)` });
     return { ok: true, data: { filename: `mission-staff-${stamp()}.csv`, csv, count: rows.length } };
@@ -135,6 +138,7 @@ export async function exportMissionsCsv(): Promise<ActionResult<CsvFile>> {
       m.mission_reference, m.title, m.country_code, m.postal_code, m.city, m.region, m.status, m.required_staff_count, m.selected_count, m.confirmed_count,
       m.scheduled_start_at, m.scheduled_end_at, m.transport_mode, m.location_status,
     ]);
+    if (rows.length === 0) return { ok: false, error: "Rien à exporter : aucune donnée." };
     const csv = toCsv(["reference", "title", "country", "postal_code", "city", "region", "status", "required_staff", "selected_staff", "confirmed_staff", "start_utc", "end_utc", "transport_mode", "location_status"], rows, { bom: true });
     await logActivity(supabase, user.id, { event_type: "export_completed", description: `Export CSV missions : ${rows.length} ligne(s)` });
     return { ok: true, data: { filename: `missions-${stamp()}.csv`, csv, count: rows.length } };

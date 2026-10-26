@@ -1,76 +1,50 @@
 "use client";
 import * as React from "react";
-import { usePathname, useRouter } from "next/navigation";
-import { Search, X } from "lucide-react";
+import { SlidersHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/form";
+import { SearchInput, useUrlParams } from "@/components/ui/search-input";
+import { SearchablePicker } from "@/components/ui/searchable-picker";
 import { APP_CONFIG } from "@/config/app";
-import { COUNTRY_LIST } from "@/config/countries";
+import { SKILL_CATALOG } from "@/config/skills";
+import { countryPickerOptions } from "@/components/location/country-options";
 import type { StaffFilters } from "@/lib/staff-query";
-import { staffFiltersToParams } from "@/lib/staff-query";
-import { toQuery } from "@/lib/utils";
+import { usePreferences } from "@/components/providers/preferences-provider";
 
-type TextKey = "q" | "city" | "region" | "skill";
-
-/** Recherche serveur avec anti-rebond : les champs texte attendent 350 ms, les listes s’appliquent tout de suite. Les filtres vivent dans l’URL. */
-export function StaffFiltersBar({ filters }: { filters: StaffFilters }) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const [text, setText] = React.useState<Record<TextKey, string>>({ q: filters.q, city: filters.city, region: filters.region, skill: filters.skill });
-  const first = React.useRef(true);
-
-  const push = React.useCallback((overrides: Record<string, string | number>) => {
-    const params = staffFiltersToParams({ ...filters, ...text }, { page: 1, ...overrides });
-    router.replace(`${pathname}${toQuery(params)}`);
-  }, [filters, text, router, pathname]);
-
-  React.useEffect(() => {
-    if (first.current) { first.current = false; return; }
-    const t = setTimeout(() => push({}), 350);
-    return () => clearTimeout(t);
-    // Déclenché uniquement par la saisie de texte.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [text.q, text.city, text.region, text.skill]);
-
-  const set = (k: TextKey) => (e: React.ChangeEvent<HTMLInputElement>) => setText((t) => ({ ...t, [k]: e.target.value }));
-  const hasFilters = Boolean(filters.q || filters.city || filters.region || filters.skill || filters.country || filters.availability !== "all" || filters.location !== "all" || filters.archived !== "active");
-
+/** Barre collante : recherche en direct (pas de bouton) + filtres déroulants avec recherche. Tout vit dans l’URL. */
+export function StaffToolbar({ filters }: { filters: StaffFilters }) {
+  const { t, locale } = usePreferences();
+  const { set, params } = useUrlParams();
+  const [open, setOpen] = React.useState(false);
+  const active = ["availability", "country", "location", "archived", "skill", "city", "region"].filter((k) => params.get(k)).length;
+  const countries = React.useMemo(() => countryPickerOptions(locale, { allLabel: t("Tous les pays", "All countries") }).filter((o) => !o.value.includes("-")), [locale, t]);
+  const skills = React.useMemo(() => [{ value: "", label: t("Toutes les compétences", "All skills") }, ...SKILL_CATALOG.map((s) => ({ value: s.id, label: s[locale], search: `${s.fr} ${s.en}` }))], [locale, t]);
   return (
-    <form role="search" aria-label="Filtres du staff" className="space-y-3 rounded-xl border border-line bg-surface p-4 shadow-card" onSubmit={(e) => { e.preventDefault(); push({}); }}>
-      <div className="relative">
-        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" aria-hidden />
-        <Input aria-label="Rechercher un staff" placeholder="Nom, code, téléphone, e-mail, code postal, ville, compétence…" className="pl-9" value={text.q} onChange={set("q")} />
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Select aria-label="Disponibilité" value={filters.availability} onChange={(e) => push({ availability: e.target.value === "all" ? "" : e.target.value })}>
-          <option value="all">Toutes disponibilités</option><option value="available">Disponible</option><option value="unavailable">Indisponible</option><option value="unknown">Inconnue</option>
-        </Select>
-        <Select aria-label="Pays" value={filters.country} onChange={(e) => push({ country: e.target.value })}>
-          <option value="">Tous les pays</option>
-          {COUNTRY_LIST.map((c) => <option key={c.code} value={c.code}>{c.name}</option>)}
-        </Select>
-        <Select aria-label="Statut de localisation" value={filters.location} onChange={(e) => push({ location: e.target.value === "all" ? "" : e.target.value })}>
-          <option value="all">Toutes localisations</option><option value="resolved">Localisation vérifiée</option><option value="pending">À vérifier</option><option value="failed">À revoir</option>
-        </Select>
-        <Select aria-label="Archivage" value={filters.archived} onChange={(e) => push({ archived: e.target.value === "active" ? "" : e.target.value })}>
-          <option value="active">Actifs</option><option value="archived">Archivés</option><option value="all">Tous</option>
-        </Select>
-        <Input aria-label="Ville" placeholder="Ville" value={text.city} onChange={set("city")} />
-        <Input aria-label="Région" placeholder="Région / comté" value={text.region} onChange={set("region")} />
-        <Input aria-label="Compétence" placeholder="Compétence exacte" value={text.skill} onChange={set("skill")} />
-        <Select aria-label="Lignes par page" value={filters.pageSize} onChange={(e) => push({ pageSize: e.target.value })}>
-          {APP_CONFIG.pagination.pageSizes.map((n) => <option key={n} value={n}>{n} par page</option>)}
-        </Select>
-      </div>
-      <div className="flex justify-end gap-2">
-        <Button type="submit" variant="secondary" size="sm"><Search className="h-4 w-4" aria-hidden /> Appliquer</Button>
-        <Button
-          variant="ghost" size="sm" disabled={!hasFilters}
-          onClick={() => { setText({ q: "", city: "", region: "", skill: "" }); first.current = true; router.replace(pathname); }}
-        >
-          <X className="h-4 w-4" aria-hidden /> Effacer les filtres
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <SearchInput className="min-w-0 flex-1" placeholder={t("Nom, code, téléphone, e-mail, code postal, ville, compétence…", "Name, ID, phone, email, postcode, city, skill…")} />
+        <Button variant={active ? "soft" : "secondary"} aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          <SlidersHorizontal className="h-4 w-4" aria-hidden /><span className="hidden sm:inline">{t("Filtres", "Filters")}</span>
+          {active ? <span className="grid h-5 min-w-5 place-items-center rounded-full bg-primary px-1 text-[11px] text-white">{active}</span> : null}
         </Button>
       </div>
-    </form>
+      {open ? (
+        <div className="anim-fade grid gap-3 rounded-xl border border-line bg-surface p-3 sm:grid-cols-2 lg:grid-cols-4">
+          <SearchablePicker id="f-avail" value={filters.availability === "all" ? "" : filters.availability} onValueChange={(v) => set({ availability: v })}
+            options={[{ value: "", label: t("Toutes disponibilités", "Any availability") }, { value: "available", label: t("Disponible", "Available") }, { value: "unavailable", label: t("Indisponible", "Unavailable") }, { value: "unknown", label: t("Inconnue", "Unknown") }]} />
+          <SearchablePicker id="f-country" value={filters.country} onValueChange={(v) => set({ country: v })} options={countries} searchPlaceholder={t("Rechercher un pays…", "Search country…")} />
+          <SearchablePicker id="f-skill" value={filters.skill} onValueChange={(v) => set({ skill: v })} options={skills} searchPlaceholder={t("Rechercher une compétence…", "Search skill…")} />
+          <SearchablePicker id="f-loc" value={filters.location === "all" ? "" : filters.location} onValueChange={(v) => set({ location: v })}
+            options={[{ value: "", label: t("Toutes localisations", "Any location status") }, { value: "resolved", label: t("Vérifiée", "Verified") }, { value: "pending", label: t("À vérifier", "Needs checking") }, { value: "failed", label: t("À revoir", "Needs review") }]} />
+          <SearchInput param="city" placeholder={t("Ville", "City")} />
+          <SearchInput param="region" placeholder={t("Région / comté", "Region / county")} />
+          <SearchablePicker id="f-arch" value={filters.archived === "active" ? "" : filters.archived} onValueChange={(v) => set({ archived: v })}
+            options={[{ value: "", label: t("Actifs", "Active") }, { value: "archived", label: t("Archivés", "Archived") }, { value: "all", label: t("Tous", "All") }]} />
+          <div className="flex gap-2">
+            <SearchablePicker id="f-size" className="flex-1" value={String(filters.pageSize)} onValueChange={(v) => set({ pageSize: v === String(APP_CONFIG.pagination.defaultPageSize) ? "" : v })} options={APP_CONFIG.pagination.pageSizes.map((n) => ({ value: String(n), label: `${n} ${t("par page", "per page")}` }))} />
+            <Button variant="ghost" disabled={!active && !params.get("q")} onClick={() => set({ q: "", availability: "", country: "", skill: "", location: "", archived: "", city: "", region: "", pageSize: "" })}><X className="h-4 w-4" aria-hidden />{t("Effacer", "Clear")}</Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }

@@ -26,6 +26,13 @@ export type RouteEstimate =
       distanceM: number;
       durationS: number;
       estimatedAt: string;
+      /**
+       * "train_estimate" : durée estimée par vitesse moyenne supposée (aucun horaire réel). L'interface doit
+       * l'étiqueter « approximatif ». Absent pour les replis voiture / marche / vélo.
+       */
+      kind?: "train_estimate";
+      /** Mention d'avertissement prête à afficher (français ; à passer par localizeMessage). */
+      note?: string;
     }
   | { status: RouteFailureStatus; mode: TransportMode; message: string };
 

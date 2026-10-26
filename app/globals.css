@@ -1,33 +1,152 @@
 @import "tailwindcss";
 
+/* ───────────────────────── Manecare design tokens ─────────────────────────
+   Couleurs tirées du logo Maneliza Care : bleu ciel (#039DF5) et rouge profond (#9F1013).
+   Mode sombre : fond noir conservé, primaire revu.                                     */
 @theme {
-  --color-bg: #f7f8fa;
+  --color-bg: #f4f7fa;
   --color-surface: #ffffff;
-  --color-ink: #172033;
-  --color-muted: #667085;
-  --color-primary: #3157d5;
-  --color-primary-hover: #2647b8;
-  --color-primary-soft: #eef2ff;
-  --color-line: #e5e7eb;
-  --color-success: #067647;
-  --color-success-soft: #ecfdf3;
-  --color-warning: #b54708;
-  --color-warning-soft: #fffaeb;
-  --color-danger: #b42318;
-  --color-danger-soft: #fef3f2;
+  --color-surface-2: #f8fafc;
+  --color-ink: #0f1b2a;
+  --color-muted: #5b6b7c;
+  --color-line: #e3e9ef;
+  --color-primary: #0878c0;
+  --color-primary-hover: #066aa9;
+  --color-primary-soft: #e6f3fc;
+  --color-accent: #b3151b;
+  --color-accent-soft: #fdecec;
+  --color-success: #0c7c59;
+  --color-success-soft: #e4f6ee;
+  --color-warning: #b45309;
+  --color-warning-soft: #fff4e0;
+  --color-danger: #c4262e;
+  --color-danger-soft: #fdecec;
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --shadow-card: 0 1px 2px rgb(16 24 40 / 0.05), 0 1px 3px rgb(16 24 40 / 0.06);
+  --shadow-card: 0 1px 2px rgb(15 27 42 / 0.04), 0 4px 14px -6px rgb(15 27 42 / 0.08);
+  --shadow-pop: 0 18px 50px -12px rgb(15 27 42 / 0.28);
+  --radius-card: 14px;
 }
 
-html { background: var(--color-bg); color: var(--color-ink); }
-body { font-family: var(--font-sans); -webkit-font-smoothing: antialiased; min-height: 100dvh; }
+html {
+  color-scheme: light;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  scroll-behavior: smooth;
+}
 
+html.dark {
+  color-scheme: dark;
+  --color-bg: #000000;
+  --color-surface: #0c0f13;
+  --color-surface-2: #12161b;
+  --color-ink: #eaf1f7;
+  --color-muted: #94a3b2;
+  --color-line: #1f262e;
+  --color-primary: #0a84d6;
+  --color-primary-hover: #1d96e8;
+  --color-primary-soft: #0c2536;
+  --color-accent: #ff6b72;
+  --color-accent-soft: #2a1114;
+  --color-success: #4cd0a0;
+  --color-success-soft: #0c2a21;
+  --color-warning: #f5b85a;
+  --color-warning-soft: #2c200c;
+  --color-danger: #ff7b81;
+  --color-danger-soft: #2b1214;
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.03) inset, 0 8px 24px -12px rgb(0 0 0 / 0.8);
+  --shadow-pop: 0 22px 60px -12px rgb(0 0 0 / 0.9);
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+  background: var(--color-bg);
+  color: var(--color-ink);
+}
+
+* { box-sizing: border-box; }
+::selection { background: color-mix(in srgb, var(--color-primary) 28%, transparent); }
 :focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+input:focus-visible, textarea:focus-visible, select:focus-visible, [data-field]:focus-visible { outline: none; }
 
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
-}
+button, a, input, textarea, select { transition: color .16s ease, background-color .16s ease, border-color .16s ease, box-shadow .16s ease, transform .16s ease, opacity .16s ease; }
+button:not(:disabled):active { transform: translateY(1px) scale(.99); }
 
-dialog::backdrop { background: rgb(23 32 51 / 0.45); }
+/* Texte sur fond primaire toujours lisible */
+.bg-primary { color: #fff; }
+
+/* Barres de défilement discrètes */
+.scroll-thin { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--color-muted) 40%, transparent) transparent; }
+.scroll-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll-thin::-webkit-scrollbar-thumb { border-radius: 99px; background: color-mix(in srgb, var(--color-muted) 40%, transparent); }
+
+/* ───────────────────────── Animations ───────────────────────── */
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes pop { from { opacity: 0; transform: translateY(-6px) scale(.97); } to { opacity: 1; transform: none; } }
+@keyframes shimmer { 100% { transform: translateX(100%); } }
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+@keyframes pulse-ring { 0% { transform: scale(.8); opacity: .7; } 100% { transform: scale(2.2); opacity: 0; } }
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes marquee { to { transform: translateX(-50%); } }
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+@keyframes beat { 0%, 100% { transform: scale(1); } 14% { transform: scale(1.12); } 28% { transform: scale(1); } 42% { transform: scale(1.08); } }
+@keyframes progress { 0% { transform: translateX(-100%); } 100% { transform: translateX(250%); } }
+
+.anim-rise { animation: rise .5s cubic-bezier(.2, .8, .2, 1) both; }
+.anim-fade { animation: fade .35s ease both; }
+.anim-pop { animation: pop .16s ease-out both; transform-origin: top; }
+.anim-float { animation: float 6s ease-in-out infinite; }
+.anim-beat { animation: beat 2.4s ease-in-out infinite; }
+
+/* Apparition en cascade des enfants */
+.stagger > * { animation: rise .5s cubic-bezier(.2, .8, .2, 1) both; }
+.stagger > *:nth-child(1) { animation-delay: .02s; } .stagger > *:nth-child(2) { animation-delay: .07s; }
+.stagger > *:nth-child(3) { animation-delay: .12s; } .stagger > *:nth-child(4) { animation-delay: .17s; }
+.stagger > *:nth-child(5) { animation-delay: .22s; } .stagger > *:nth-child(6) { animation-delay: .27s; }
+.stagger > *:nth-child(n+7) { animation-delay: .32s; }
+
+/* Apparition au défilement (page d'accueil) */
+.reveal { opacity: 0; transform: translateY(26px); transition: opacity .7s cubic-bezier(.2, .8, .2, 1), transform .7s cubic-bezier(.2, .8, .2, 1); transition-delay: var(--d, 0s); }
+.reveal.in { opacity: 1; transform: none; }
+
+/* Squelettes de chargement */
+.skeleton { position: relative; overflow: hidden; border-radius: 8px; background: color-mix(in srgb, var(--color-muted) 14%, transparent); }
+.skeleton::after { content: ""; position: absolute; inset: 0; transform: translateX(-100%); background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--color-ink) 7%, transparent), transparent); animation: shimmer 1.4s infinite; }
+
+/* Barre de progression de navigation / filtrage */
+.top-progress { position: fixed; left: 0; right: 0; top: 0; z-index: 100; height: 2px; overflow: hidden; pointer-events: none; }
+.top-progress::after { content: ""; display: block; width: 40%; height: 100%; background: var(--color-primary); border-radius: 99px; animation: progress 1s ease-in-out infinite; }
+
+/* Surfaces */
+.card-surface { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: var(--radius-card); box-shadow: var(--shadow-card); }
+.lift { transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease; }
+.lift:hover { transform: translateY(-3px); box-shadow: var(--shadow-pop); border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-line)); }
+.glass { background: color-mix(in srgb, var(--color-surface) 82%, transparent); backdrop-filter: blur(14px) saturate(1.2); }
+
+/* Tableaux : en-tête collant sous l'en-tête de page */
+.data-table thead th { position: sticky; top: var(--table-top, 0px); z-index: 5; background: var(--color-surface-2); box-shadow: 0 1px 0 var(--color-line); }
+.data-table tbody tr { transition: background-color .12s ease; }
+.data-table tbody tr:hover { background: color-mix(in srgb, var(--color-primary) 5%, transparent); }
+.data-table tbody tr[data-selected="true"] { background: color-mix(in srgb, var(--color-primary) 9%, transparent); }
+
+dialog::backdrop { background: rgb(2 8 14 / .6); backdrop-filter: blur(4px); }
+dialog[open] { animation: pop .18s ease-out both; }
 
 .mapboxgl-map { font-family: var(--font-sans); }
+.mapboxgl-ctrl-group { border-radius: 12px !important; overflow: hidden; box-shadow: var(--shadow-card) !important; }
+
+/* Route dessinée */
+.route-draw { stroke-dasharray: 1000; stroke-dashoffset: 1000; animation: draw 1.4s ease forwards; }
+
+/* Évite le zoom automatique sur iOS */
+@media (max-width: 640px) { input, textarea, select { font-size: 16px; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+  .reveal { opacity: 1; transform: none; }
+}
+
+/* Alias utilisé par plusieurs composants */
+.animate-enter { animation: rise .45s cubic-bezier(.2, .8, .2, 1) both; }

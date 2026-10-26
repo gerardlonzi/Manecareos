@@ -36,3 +36,13 @@ export async function deleteNotification(id: string): Promise<ActionResult> {
     return { ok: true, message: "Notification supprimée" };
   });
 }
+
+export async function deleteReadNotifications(): Promise<ActionResult> {
+  return withSession(async ({ supabase }) => {
+    const { error } = await supabase.from("notifications").delete().not("read_at", "is", null);
+    if (error) return { ok: false, error: "Suppression impossible." };
+    revalidatePath("/notifications");
+    revalidatePath("/", "layout");
+    return { ok: true, message: "Notifications lues supprimées" };
+  });
+}

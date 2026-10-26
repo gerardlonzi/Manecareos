@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { APP_CONFIG } from "@/config/app";
+import { signPhotoUrls } from "@/lib/photos";
 import { haversineMeters, isValidCoordinate, type LatLon } from "@/lib/geo/haversine";
 import type { CandidateDTO, NearbyResult, SearchParams, SearchTarget } from "@/lib/search-types";
 import type { AssignmentStatus, Mission } from "@/lib/types";
@@ -43,7 +44,7 @@ type RpcRow = {
   id: string; full_name: string; staff_code: string | null; phone: string | null; email: string | null;
   country_code: string; postal_code: string | null; city: string | null; region: string | null;
   latitude: number; longitude: number; location_status: "pending" | "resolved" | "failed"; location_updated_at: string | null;
-  availability_status: "available" | "unavailable" | "unknown"; skills: string[]; straight_line_m: number;
+  availability_status: "available" | "unavailable" | "unknown"; skills: string[]; straight_line_m: number; photo_path?: string | null; weekly_hours?: number | null;
 };
 
 /** Étape 1 : candidats proches par distance à vol d'oiseau (index + Haversine côté base). Aucun appel au fournisseur d'itinéraires. */
@@ -80,6 +81,8 @@ export async function findNearbyCandidates(supabase: SupabaseClient, params: Sea
   if (skills.length > 0) ex = ex.contains("skills", skills);
   const { count: excluded } = await ex;
 
+  const photoUrls = await signPhotoUrls(supabase, kept.map((r) => ({ id: r.id, photo_path: r.photo_path })));
+
   const candidates: CandidateDTO[] = kept.map((r) => ({
     id: r.id, fullName: r.full_name, staffCode: r.staff_code, phone: r.phone, email: r.email,
     countryCode: r.country_code, postalCode: r.postal_code, city: r.city, region: r.region,
@@ -88,6 +91,8 @@ export async function findNearbyCandidates(supabase: SupabaseClient, params: Sea
     availability: r.availability_status, skills: r.skills,
     // Recalcul applicatif de contrôle ; repli sur la valeur SQL si besoin.
     straightLineM: haversineMeters(t.origin, r) ?? r.straight_line_m,
+    photoUrl: photoUrls[r.id] ?? null,
+    weeklyHours: r.weekly_hours === undefined || r.weekly_hours === null ? null : Number(r.weekly_hours),
     assignment: assignments.get(r.id) ?? null,
   }));
   candidates.sort((a, b) => a.straightLineM - b.straightLineM);

@@ -36,6 +36,10 @@ export type Staff = {
   availability_status: AvailabilityStatus;
   skills: string[];
   notes: string | null;
+  /** Chemin de la photo dans le bucket privé « staff-photos » (`<owner_id>/<staff_id>.<ext>`). */
+  photo_path: string | null;
+  /** Heures de travail par semaine (0–168), ou null. */
+  weekly_hours: number | null;
   last_contacted_at: string | null;
   created_at: string;
   updated_at: string;

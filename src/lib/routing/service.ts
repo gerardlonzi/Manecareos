@@ -2,9 +2,10 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { APP_CONFIG } from "@/config/app";
 import { mapWithConcurrency, chunk } from "@/lib/concurrency";
-import type { LatLon } from "@/lib/geo/haversine";
+import { haversineMeters, type LatLon } from "@/lib/geo/haversine";
 import type { TransportMode } from "@/lib/types";
 import { cacheExpiry, isCacheFresh, routeCacheKey } from "./cache";
+import { isEstimateOnlyMode, ESTIMATE_ONLY_MODES, trainEstimate } from "./fallback";
 import { MapboxRoutingProvider } from "./mapbox";
 import type { RouteEstimate, RoutingProvider } from "./types";
 
@@ -17,7 +18,7 @@ export function getRoutingProvider(): RoutingProvider {
 /** Modes réellement calculables avec la configuration actuelle (pour l'interface). */
 export function getRoutingCapabilities() {
   const p = getRoutingProvider();
-  return { provider: p.id, configured: p.isConfigured(), supportedModes: p.supportedModes() };
+  return { provider: p.id, configured: p.isConfigured(), supportedModes: p.supportedModes(), estimateOnlyModes: [...ESTIMATE_ONLY_MODES] };
 }
 
 type CacheRow = {
@@ -49,6 +50,16 @@ export async function getRouteEstimates(
   const p = getRoutingProvider();
   const out = new Map<string, RouteEstimate>();
   const bounded = origins.slice(0, APP_CONFIG.search.maxRouteCandidates);
+
+  // Transports en commun : estimation par vitesse moyenne supposée, sans fournisseur ni cache (calcul instantané).
+  if (isEstimateOnlyMode(mode)) {
+    const now = new Date();
+    for (const o of bounded) {
+      const est = trainEstimate(haversineMeters(o, destination), now);
+      if (est) out.set(o.id, est);
+    }
+    return out;
+  }
 
   if (!p.supportedModes().includes(mode) || !p.isConfigured()) {
     const [first] = await p.estimateMany(bounded.slice(0, 1), destination, mode);

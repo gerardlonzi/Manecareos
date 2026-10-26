@@ -31,6 +31,9 @@ export type CandidateDTO = {
   availability: AvailabilityStatus;
   skills: string[];
   straightLineM: number;
+  /** URL signée (1 h) de la photo, ou null : l'interface retombe alors sur les initiales. */
+  photoUrl: string | null;
+  weeklyHours: number | null;
   assignment: { id: string; status: AssignmentStatus } | null;
 };
 
@@ -45,4 +48,5 @@ export type NearbyResult = {
 
 export type RouteMap = Record<string, RouteEstimate>;
 
-export type RoutingCapabilitiesDTO = { provider: string; configured: boolean; supportedModes: TransportMode[] };
+/** supportedModes : itinéraires réels. estimateOnlyModes : estimations approximatives uniquement (ex. train). */
+export type RoutingCapabilitiesDTO = { provider: string; configured: boolean; supportedModes: TransportMode[]; estimateOnlyModes: TransportMode[] };

@@ -74,8 +74,15 @@ describe("formatDuration", () => {
 
 describe("normalizePostalCode", () => {
   it("code postal UK : majuscules et espace canonique", () => {
-    expect(normalizePostalCode("GB", "sw1a1aa")).toEqual({ ok: true, display: "SW1A 1AA", key: "SW1A1AA", strict: true });
+    expect(normalizePostalCode("GB", "sw1a1aa")).toEqual({ ok: true, display: "SW1A 1AA", key: "SW1A1AA", strict: true, precision: "full" });
     expect(normalizePostalCode("GB", " m1 1ae ")).toMatchObject({ ok: true, display: "M1 1AE" });
+  });
+  it("code postal UK partiel : secteur et partie sortante acceptés", () => {
+    expect(normalizePostalCode("GB", "b1 1")).toMatchObject({ ok: true, display: "B1 1", precision: "sector" });
+    expect(normalizePostalCode("GB", "B1")).toMatchObject({ ok: true, display: "B1", precision: "outward" });
+    expect(normalizePostalCode("GB", "sw1a")).toMatchObject({ ok: true, display: "SW1A", precision: "outward" });
+    expect(normalizePostalCode("GB", "SW1A 1AA")).toMatchObject({ precision: "full" });
+    expect(normalizePostalCode("GB", "B")).toMatchObject({ ok: false });
   });
   it("refuse un code UK invalide", () => expect(normalizePostalCode("GB", "12345").ok).toBe(false));
   it("France : 5 chiffres", () => {

@@ -2,7 +2,7 @@
 import * as React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Download, FileUp, RotateCcw } from "lucide-react";
+import { Download, FileUp, RotateCcw, FileSpreadsheet, CheckCircle2, Info } from "lucide-react";
 import { toast } from "sonner";
 import { finalizeImport, getExistingIdentifiers, importStaffBatch, type ImportRowFailure } from "@/actions/import";
 import { Button, LinkButton } from "@/components/ui/button";
@@ -101,6 +101,16 @@ export function ImportWizard({ defaultCountry }: { defaultCountry: string }) {
 
   return (
     <div className="space-y-6">
+      {stage === "choose" ? <>
+        <div className="rounded-2xl border border-primary/15 bg-gradient-to-br from-primary-soft/70 via-surface to-surface p-5 sm:p-7">
+          <div className="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+            <div className="max-w-2xl"><div className="mb-3 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-surface px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider text-primary"><FileSpreadsheet className="h-3.5 w-3.5" /> Import CSV</div><h2 className="text-2xl font-semibold tracking-tight">Importez votre équipe en quelques étapes.</h2><p className="mt-2 text-sm leading-6 text-muted">Téléchargez le modèle, complétez les colonnes utiles, puis vérifiez l’aperçu avant l’enregistrement. Rien n’est ajouté tant que vous n’avez pas confirmé.</p></div>
+            <Button variant="secondary" onClick={() => downloadCsv("modele-import-staff.csv", importTemplateCsv())}><Download className="h-4 w-4" /> Télécharger le modèle</Button>
+          </div>
+          <div className="mt-6 grid gap-3 sm:grid-cols-3"><div className="rounded-xl border border-line bg-surface p-4"><span className="grid h-8 w-8 place-items-center rounded-lg bg-primary-soft text-primary"><Download className="h-4 w-4" /></span><p className="mt-3 text-sm font-semibold">1. Télécharger</p><p className="mt-1 text-xs leading-5 text-muted">Utilisez les en-têtes du modèle pour éviter les colonnes mal reconnues.</p></div><div className="rounded-xl border border-line bg-surface p-4"><span className="grid h-8 w-8 place-items-center rounded-lg bg-primary-soft text-primary"><FileSpreadsheet className="h-4 w-4" /></span><p className="mt-3 text-sm font-semibold">2. Compléter le CSV</p><p className="mt-1 text-xs leading-5 text-muted">Une ligne par personne. Le nom complet est obligatoire ; les autres informations peuvent rester vides.</p></div><div className="rounded-xl border border-line bg-surface p-4"><span className="grid h-8 w-8 place-items-center rounded-lg bg-success-soft text-success"><CheckCircle2 className="h-4 w-4" /></span><p className="mt-3 text-sm font-semibold">3. Vérifier et importer</p><p className="mt-1 text-xs leading-5 text-muted">Corrigez les lignes signalées, puis confirmez l’import en toute connaissance de cause.</p></div></div>
+          <div className="mt-4 flex items-start gap-2 rounded-xl border border-line bg-surface/80 p-3 text-xs leading-5 text-muted"><Info className="mt-0.5 h-4 w-4 shrink-0 text-primary" /><p><strong>Colonnes attendues :</strong> full_name (obligatoire), staff_code, phone, email, country_code, postal_code, city, region, skills, availability, notes. <strong>Formats :</strong> CSV UTF-8, 5 Mo maximum, jusqu’à 5 000 lignes par fichier.</p></div>
+        </div>
+      </> : null}
       {stage === "choose" ? (
         <Card>
           <CardHeader title="1. Choisir un fichier" description="Format .csv, 5 000 lignes maximum. Aucune ligne n’est enregistrée avant votre confirmation." />

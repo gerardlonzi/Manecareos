@@ -10,24 +10,7 @@ export type ActivityInput = {
   metadata?: Record<string, unknown>;
 };
 
-export const EVENT_LABELS: Record<string, string> = {
-  staff_created: "Staff créé",
-  staff_updated: "Staff modifié",
-  staff_archived: "Staff archivé",
-  availability_changed: "Disponibilité modifiée",
-  location_resolved: "Localisation résolue",
-  location_failed: "Échec de localisation",
-  staff_contacted: "Staff marqué comme contacté",
-  mission_created: "Mission créée",
-  mission_updated: "Mission modifiée",
-  mission_status_changed: "Statut de mission modifié",
-  mission_cancelled: "Mission annulée",
-  staff_selected: "Staff sélectionné",
-  assignment_status_changed: "Statut d'affectation modifié",
-  import_completed: "Import CSV terminé",
-  export_completed: "Export CSV terminé",
-  routing_failed: "Échec du calcul d'itinéraire",
-};
+export { EVENT_LABELS, EVENT_LABELS_EN } from "@/config/activity-labels";
 
 /** Journal append-only. Un échec de journalisation ne doit pas annuler l'action métier : il est consigné côté serveur. */
 export async function logActivity(supabase: SupabaseClient, ownerId: string, e: ActivityInput | ActivityInput[]): Promise<void> {
