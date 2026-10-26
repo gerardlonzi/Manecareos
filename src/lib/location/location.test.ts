@@ -1,0 +1,195 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MapboxGeocoder } from "./geocoder";
+import { locationKey, resetLocationCacheForTests, resolveLocation, resolveMany } from "./service";
+import { computeLocation, type LocationPrev } from "./apply";
+import { chunk, mapWithConcurrency } from "@/lib/concurrency";
+
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+const feature = (lon: number, lat: number) => ({
+  features: [{ geometry: { coordinates: [lon, lat] }, properties: { full_address: "SW1A 1AA, London", context: { place: { name: "London" }, region: { name: "England" } } } }],
+});
+
+describe("locationKey", () => {
+  it("normalise le code postal et la casse", () => {
+    expect(locationKey({ countryCode: "gb", postalCode: "sw1a 1aa" })).toBe(locationKey({ countryCode: "GB", postalCode: "SW1A1AA" }));
+  });
+});
+
+describe("resolveLocation", () => {
+  const originalToken = process.env.MAPBOX_SERVER_TOKEN;
+  beforeEach(() => {
+    process.env.MAPBOX_SERVER_TOKEN = "t";
+    resetLocationCacheForTests();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalToken === undefined) delete process.env.MAPBOX_SERVER_TOKEN;
+    else process.env.MAPBOX_SERVER_TOKEN = originalToken;
+  });
+
+  it("résout un code postal valide (réponse simulée)", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(feature(-0.1419, 51.501)));
+    const r = await resolveLocation({ countryCode: "GB", postalCode: "sw1a1aa" });
+    expect(r).toMatchObject({ ok: true, latitude: 51.501, longitude: -0.1419, postalDisplay: "SW1A 1AA", city: "London" });
+  });
+  it("n'appelle pas le réseau pour un code postal invalide", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    const r = await resolveLocation({ countryCode: "GB", postalCode: "ZZZ" });
+    expect(r).toMatchObject({ ok: false, reason: "invalid_input" });
+    expect(spy).not.toHaveBeenCalled();
+  });
+  it("ne géocode pas deux fois la même adresse", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(feature(-0.14, 51.5)));
+    await resolveLocation({ countryCode: "GB", postalCode: "SW1A 1AA" });
+    await resolveLocation({ countryCode: "GB", postalCode: "sw1a1aa" });
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+  it("ne mémorise pas les pannes temporaires", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(json({}, 500)).mockResolvedValueOnce(json(feature(-0.14, 51.5)));
+    expect((await resolveLocation({ countryCode: "GB", postalCode: "SW1A 1AA" })).ok).toBe(false);
+    expect((await resolveLocation({ countryCode: "GB", postalCode: "SW1A 1AA" })).ok).toBe(true);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+  it("aucun résultat → not_found, sans coordonnées inventées", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({ features: [] }));
+    expect(await resolveLocation({ countryCode: "GB", postalCode: "SW1A 1AA" })).toMatchObject({ ok: false, reason: "not_found" });
+  });
+  it("coordonnées hors bornes dans la réponse → rejetées", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(feature(500, 500)));
+    expect(await resolveLocation({ countryCode: "GB", postalCode: "SW1A 1AA" })).toMatchObject({ ok: false, reason: "invalid_response" });
+  });
+  it("429 → rate_limited ; sans jeton → not_configured", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json({}, 429));
+    expect(await resolveLocation({ countryCode: "GB", postalCode: "SW1A 1AA" })).toMatchObject({ ok: false, reason: "rate_limited" });
+    delete process.env.MAPBOX_SERVER_TOKEN;
+    resetLocationCacheForTests();
+    expect(await new MapboxGeocoder().geocode({ countryCode: "GB", postalCode: "SW1A 1AA" })).toMatchObject({ ok: false, reason: "not_configured" });
+  });
+  it("pays sans code postal fiable : géocode par ville", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(feature(9.7, 4.05)));
+    const r = await resolveLocation({ countryCode: "CM", city: "Douala" });
+    expect(r.ok).toBe(true);
+    expect(decodeURIComponent(String(spy.mock.calls[0]?.[0]))).toContain("q=Douala");
+  });
+  it("resolveMany déduplique les adresses identiques", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(feature(-0.14, 51.5)));
+    const out = await resolveMany([
+      { countryCode: "GB", postalCode: "SW1A 1AA" },
+      { countryCode: "GB", postalCode: "sw1a1aa" },
+      { countryCode: "GB", postalCode: "M1 1AE" },
+    ]);
+    expect(out.size).toBe(2);
+    expect(spy).toHaveBeenCalledTimes(2);
+  });
+});
+
+const cityFeature = (lon: number, lat: number) => ({
+  features: [{ geometry: { coordinates: [lon, lat] }, properties: { full_address: "Birmingham, England", name: "Birmingham", context: { place: { name: "Birmingham" }, region: { name: "England" } } } }],
+});
+const reverseFeature = (name: string) => ({ features: [{ properties: { name, context: { region: { name: "England" } } } }] });
+const byUrl = (forward: Response, reverse: Response | Error) => async (url: unknown) => {
+  if (String(url).includes("/reverse?")) {
+    if (reverse instanceof Error) throw reverse;
+    return reverse.clone();
+  }
+  return forward.clone();
+};
+
+describe("code postal dérivé (ville seule)", () => {
+  const originalToken = process.env.MAPBOX_SERVER_TOKEN;
+  beforeEach(() => {
+    process.env.MAPBOX_SERVER_TOKEN = "t";
+    resetLocationCacheForTests();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    if (originalToken === undefined) delete process.env.MAPBOX_SERVER_TOKEN;
+    else process.env.MAPBOX_SERVER_TOKEN = originalToken;
+  });
+
+  it("géocodage inverse : le code postal le plus proche est renvoyé", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockImplementation(byUrl(json(cityFeature(-1.89, 52.48)), json(reverseFeature("B2 4QA"))) as typeof fetch);
+    const r = await resolveLocation({ countryCode: "GB", city: "Birmingham" });
+    expect(r).toMatchObject({ ok: true, postalDisplay: "B2 4QA", postal_derived: true, region: "England" });
+    const reverseUrl = decodeURIComponent(String(spy.mock.calls[1]?.[0]));
+    expect(reverseUrl).toContain("/reverse?");
+    expect(reverseUrl).toContain("types=postcode");
+    expect(reverseUrl).toContain("limit=1");
+    expect(reverseUrl).toContain("country=gb");
+  });
+  it("un code postal saisi n'est jamais remplacé et ne déclenche pas de requête inverse", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(json(feature(-0.14, 51.5)));
+    const r = await resolveLocation({ countryCode: "GB", postalCode: "SW1A 1AA", city: "London" });
+    expect(r).toMatchObject({ ok: true, postalDisplay: "SW1A 1AA" });
+    expect((r as { postal_derived?: boolean }).postal_derived).toBeUndefined();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+  it("échec du géocodage inverse : la localisation reste résolue, sans code postal", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(byUrl(json(cityFeature(-1.89, 52.48)), new Error("boom")) as typeof fetch);
+    const r = await resolveLocation({ countryCode: "GB", city: "Birmingham" });
+    expect(r).toMatchObject({ ok: true, postalDisplay: null });
+    expect((r as { postal_derived?: boolean }).postal_derived).toBeUndefined();
+  });
+  it("réponse inverse invalide ou 500 : ignorée", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(byUrl(json(cityFeature(-1.89, 52.48)), json({ features: "oops" })) as typeof fetch);
+    expect(await resolveLocation({ countryCode: "GB", city: "Birmingham" })).toMatchObject({ ok: true, postalDisplay: null });
+    resetLocationCacheForTests();
+    vi.spyOn(globalThis, "fetch").mockImplementation(byUrl(json(cityFeature(-1.89, 52.48)), json({}, 500)) as typeof fetch);
+    expect(await resolveLocation({ countryCode: "GB", city: "Birmingham" })).toMatchObject({ ok: true, postalDisplay: null });
+  });
+  it("un code partiel renvoyé par Mapbox (partie sortante, secteur) est accepté", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(byUrl(json(cityFeature(-1.89, 52.48)), json(reverseFeature("B1"))) as typeof fetch);
+    expect(await resolveLocation({ countryCode: "GB", city: "Birmingham" })).toMatchObject({ ok: true, postalDisplay: "B1", postal_derived: true });
+    resetLocationCacheForTests();
+    vi.spyOn(globalThis, "fetch").mockImplementation(byUrl(json(cityFeature(-1.89, 52.48)), json(reverseFeature("b1 1"))) as typeof fetch);
+    expect(await resolveLocation({ countryCode: "GB", city: "Birmingham" })).toMatchObject({ ok: true, postalDisplay: "B1 1" });
+  });
+  it("un code dérivé invalide pour le pays est écarté", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(byUrl(json(cityFeature(-1.89, 52.48)), json(reverseFeature("12345"))) as typeof fetch);
+    expect(await resolveLocation({ countryCode: "GB", city: "Birmingham" })).toMatchObject({ ok: true, postalDisplay: null });
+  });
+
+  it("computeLocation : ville seule → code postal dérivé enregistré", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(byUrl(json(cityFeature(-1.89, 52.48)), json(reverseFeature("B2 4QA"))) as typeof fetch);
+    const r = await computeLocation({ country_code: "GB", postal_code: null, city: "Birmingham", region: null });
+    expect(r.ok && r.fields).toMatchObject({ postal_code: "B2 4QA", postal_code_normalized: "B24QA", location_status: "resolved", region: "England" });
+  });
+  it("computeLocation : échec inverse → résolu sans code postal", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(byUrl(json(cityFeature(-1.89, 52.48)), json({}, 500)) as typeof fetch);
+    const r = await computeLocation({ country_code: "GB", postal_code: null, city: "Birmingham", region: null });
+    expect(r.ok && r.fields).toMatchObject({ postal_code: null, postal_code_normalized: null, location_status: "resolved" });
+  });
+  it("computeLocation : un code saisi (secteur) est accepté et conservé", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(json(cityFeature(-1.89, 52.48)));
+    const r = await computeLocation({ country_code: "GB", postal_code: "b1 1", city: "Birmingham", region: null });
+    expect(r.ok && r.fields).toMatchObject({ postal_code: "B1 1", location_status: "resolved" });
+  });
+  it("computeLocation : adresse inchangée → réutilisation, aucun appel réseau, code dérivé conservé", async () => {
+    const spy = vi.spyOn(globalThis, "fetch");
+    const prev: LocationPrev = {
+      country_code: "GB", postal_code: "B2 4QA", postal_code_normalized: "B24QA", city: "Birmingham", region: "England",
+      latitude: 52.48, longitude: -1.89, location_status: "resolved", location_updated_at: "2026-10-01T00:00:00Z",
+    };
+    const r = await computeLocation({ country_code: "GB", postal_code: null, city: "birmingham", region: "England" }, prev);
+    expect(r).toMatchObject({ ok: true, reused: true });
+    expect(r.ok && r.fields).toMatchObject({ postal_code: "B2 4QA", postal_code_normalized: "B24QA", location_updated_at: "2026-10-01T00:00:00Z" });
+    expect(spy).not.toHaveBeenCalled();
+  });
+});
+
+describe("concurrence bornée", () => {
+  it("ne dépasse jamais la limite et conserve l'ordre", async () => {
+    let active = 0;
+    let peak = 0;
+    const res = await mapWithConcurrency([1, 2, 3, 4, 5, 6, 7, 8], 3, async (n) => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 5));
+      active--;
+      return n * 2;
+    });
+    expect(peak).toBeLessThanOrEqual(3);
+    expect(res).toEqual([2, 4, 6, 8, 10, 12, 14, 16]);
+  });
+  it("chunk découpe en lots", () => expect(chunk([1, 2, 3, 4, 5], 2)).toEqual([[1, 2], [3, 4], [5]]));
+});
