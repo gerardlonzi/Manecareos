@@ -5,7 +5,7 @@
 export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
 /** Logo shown at the top of every e-mail (150 px wide). Override with EMAIL_LOGO_URL; it must be a public https image. */
-const DEFAULT_LOGO_URL = "https://yenwysnlhikusdsgjdtv.supabase.co/storage/v1/object/sign/staff-photos/maneliza-care-logo.png?token=eyJraWQiOiI3OWNmZDJmNC1lYzUyLTQ1MGYtYjc2OS1kZWI1YjRiNTYwYTciLCJhbGciOiJIUzUxMiJ9.eyJ1cmwiOiJzdGFmZi1waG90b3MvbWFuZWxpemEtY2FyZS1sb2dvLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3OTM0NTQ4NjcsImV4cCI6MjQyNDE3NDg2N30.5uz4pL75TN1lGDnQsBmQ_5sGOc4W7cxCpv46Ce5nqgGNjNe616YsJNCLIgn4Y4PtR08nEZOv9kqgjQwrSrmn1g";
+const DEFAULT_LOGO_URL = "https://yenwysnlhikusdsgjdtv.supabase.co/storage/v1/object/public/public_photos/maneliza-care-logo.png";
 const logoUrl = () => process.env.EMAIL_LOGO_URL || DEFAULT_LOGO_URL;
 
 function layout(title: string, bodyHtml: string, company: string): string {
