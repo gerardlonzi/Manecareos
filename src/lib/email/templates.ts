@@ -1,56 +1,29 @@
 /**
- * Bilingual email templates (simple HTML, compatible with all email clients).
+ * E-mail templates (English only, simple HTML compatible with all email clients).
  * All dynamic data is escaped.
  */
-export const esc = (s: string) =>
-  s.replace(/[&<>"']/g, (c) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#39;",
-  })[c]!);
+export const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-function layout(title: string, bodyHtml: string): string {
-  return `<!doctype html><html><body style="margin:0;background:#f4f7fa;font-family:Arial,Helvetica,sans-serif;color:#0f1b2a">
+/** Logo shown at the top of every e-mail (150 px wide). Override with EMAIL_LOGO_URL; it must be a public https image. */
+const DEFAULT_LOGO_URL = "https://yenwysnlhikusdsgjdtv.supabase.co/storage/v1/object/sign/staff-photos/maneliza-care-logo.png?token=eyJraWQiOiI3OWNmZDJmNC1lYzUyLTQ1MGYtYjc2OS1kZWI1YjRiNTYwYTciLCJhbGciOiJIUzUxMiJ9.eyJ1cmwiOiJzdGFmZi1waG90b3MvbWFuZWxpemEtY2FyZS1sb2dvLnBuZyIsInNjb3BlIjoiZG93bmxvYWQiLCJpYXQiOjE3OTM0NTQ4NjcsImV4cCI6MjQyNDE3NDg2N30.5uz4pL75TN1lGDnQsBmQ_5sGOc4W7cxCpv46Ce5nqgGNjNe616YsJNCLIgn4Y4PtR08nEZOv9kqgjQwrSrmn1g";
+const logoUrl = () => process.env.EMAIL_LOGO_URL || DEFAULT_LOGO_URL;
+
+function layout(title: string, bodyHtml: string, company: string): string {
+  return `<!doctype html><html lang="en"><body style="margin:0;background:#f4f7fa;font-family:Arial,Helvetica,sans-serif;color:#0f1b2a">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr><td align="center" style="padding:24px 12px">
-<table role="presentation" width="560" cellpadding="0" cellspacing="0" style="max-width:560px;background:#ffffff;border-radius:12px;border:1px solid #e3e9ef">
-<tr><td style="padding:20px 28px;border-bottom:1px solid #e3e9ef;font-weight:700;font-size:16px;color:#0878c0">Maneliza Care · Manecare</td></tr>
-<tr><td style="padding:28px;font-size:15px;line-height:1.6"><h1 style="margin:0 0 14px;font-size:20px">${esc(title)}</h1>${bodyHtml}</td></tr>
-<tr><td style="padding:16px 28px;border-top:1px solid #e3e9ef;font-size:12px;color:#5b6b7c">Maneliza Care — automated message.</td></tr>
+<table role="presentation" width="600" cellpadding="0" cellspacing="0" style="max-width:600px;width:100%;background:#ffffff;border-radius:12px;border:1px solid #e3e9ef">
+<tr><td style="padding:22px 28px;border-bottom:1px solid #e3e9ef"><img src="${esc(logoUrl())}" alt="${esc(company)}" width="150" style="display:block;width:150px;max-width:150px;height:auto;border:0"></td></tr>
+<tr><td style="padding:28px;font-size:15px;line-height:1.6"><h1 style="margin:0 0 16px;font-size:21px;line-height:1.3">${esc(title)}</h1>${bodyHtml}</td></tr>
+<tr><td style="padding:16px 28px;border-top:1px solid #e3e9ef;font-size:12px;line-height:1.5;color:#5b6b7c">${esc(company)} — this is an automated message about your compliance documents. Please do not share personal documents by anything other than the secure route your coordinator gives you.</td></tr>
 </table></td></tr></table></body></html>`;
 }
 
-export function loginCodeEmail(code: string, locale: "fr" | "en") {
-  const fr = locale === "fr";
+const longDate = (iso: string) => {
+  const d = new Date(`${iso}T00:00:00Z`);
+  return Number.isNaN(d.getTime()) ? iso : new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(d);
+};
 
-  const subject = fr
-    ? `Votre code de connexion Manecare : ${code}`
-    : `Your Manecare sign-in code: ${code}`;
-
-  const intro = fr
-    ? "Utilisez ce code pour terminer votre connexion. Il expire dans 10 minutes."
-    : "Use this code to finish signing in. It expires in 10 minutes.";
-
-  const warn = fr
-    ? "Si vous n’êtes pas à l’origine de cette connexion, changez votre mot de passe immédiatement. Ne communiquez jamais ce code."
-    : "If this wasn’t you, change your password right away. Never share this code.";
-
-  const html = layout(
-    fr ? "Code de connexion" : "Sign-in code",
-    `<p>${esc(intro)}</p>
-<p style="margin:22px 0;text-align:center">
-<span style="display:inline-block;padding:14px 26px;background:#e6f3fc;border-radius:10px;font-size:32px;letter-spacing:8px;font-weight:700;color:#066aa9">${esc(code)}</span>
-</p>
-<p style="color:#5b6b7c;font-size:13px">${esc(warn)}</p>`
-  );
-
-  return { subject, html, text: `${intro}\n\n${code}\n\n${warn}` };
-}
-
-/**
- * Email sent to staff members (both languages included in the same message).
- */
+/** E-mail sent to a staff member whose document has expired or is about to expire. */
 export function documentExpiryEmail(p: {
   staffName: string;
   documentName: { fr: string; en: string };
@@ -58,41 +31,74 @@ export function documentExpiryEmail(p: {
   daysLeft: number;
   company: string;
 }) {
+  const doc = p.documentName.en;
+  const date = longDate(p.expiresOn);
   const expired = p.daysLeft < 0;
+  const today = p.daysLeft === 0;
+  const days = Math.abs(p.daysLeft);
+  const plural = (n: number) => (n === 1 ? "1 day" : `${n} days`);
 
-  const when = expired
-    ? {
-        fr: `a expiré le ${p.expiresOn}`,
-        en: `expired on ${p.expiresOn}`,
-      }
-    : p.daysLeft === 0
-    ? {
-        fr: `expire aujourd’hui (${p.expiresOn})`,
-        en: `expires today (${p.expiresOn})`,
-      }
-    : {
-        fr: `expire le ${p.expiresOn} (dans ${p.daysLeft} jour(s))`,
-        en: `expires on ${p.expiresOn} (in ${p.daysLeft} day(s))`,
-      };
+  const status = expired
+    ? `has expired (on ${date}, ${plural(days)} ago)`
+    : today ? `expires today (${date})`
+    : `will expire on ${date}, which is in ${plural(days)}`;
 
   const subject = expired
-    ? `Document expiré / Document expired — ${p.documentName.en}`
-    : `Document à renouveler / Document to renew — ${p.documentName.en}`;
+    ? `Action required: your ${doc} has expired`
+    : today ? `Action required: your ${doc} expires today`
+    : `Action required: your ${doc} expires on ${date}`;
 
-  const fr = `Bonjour ${p.staffName}, votre document « ${p.documentName.fr} » ${when.fr}. Merci de nous transmettre une version à jour dès que possible afin de pouvoir continuer à vous proposer des missions.`;
+  const headline = expired ? `Your ${doc} has expired` : `Your ${doc} is about to expire`;
 
-  const en = `Hello ${p.staffName}, your document “${p.documentName.en}” ${when.en}. Please send us an up-to-date version as soon as possible so we can keep offering you assignments.`;
+  const intro = `Hello ${p.staffName}, we are writing because your ${doc} ${status}. ${p.company} must hold a valid, in-date copy of this document on your file at all times.`;
 
-  const sign = `${p.company}`;
+  const steps = [
+    `Renew or obtain a new, valid ${doc} as soon as you can.`,
+    `Send us a clear copy of the new document, together with its new expiry date, through the route your coordinator uses with you (for example by replying to this message or contacting your coordinator directly).`,
+    `Wait for our confirmation that your file is up to date again. Your availability for new shifts resumes once it is.`,
+  ];
+
+  const risks = expired
+    ? [
+        "You cannot be offered or assigned to new shifts until a valid document is on file: our system blocks the assignment automatically.",
+        "Shifts already planned for you may be put on hold, reviewed or given to another member of staff.",
+        "Care homes and other clients require every worker to hold valid, in-date compliance documents. Without them, we cannot place you with them.",
+        "For some documents, such as Right to Work and DBS checks, working without a valid one can breach legal or regulatory requirements for you and for the agency.",
+        "The longer the document stays out of date, the more work and income you may miss.",
+      ]
+    : [
+        `If the document is not renewed before ${date}, you will no longer be able to be assigned to new shifts, and shifts planned after that date may be reviewed or reassigned.`,
+        "Care homes and other clients require every worker to hold valid, in-date compliance documents. Without them, we cannot place you with them.",
+        "For some documents, such as Right to Work and DBS checks, working without a valid one can breach legal or regulatory requirements for you and for the agency.",
+        "Renewals can take time. Starting now helps you avoid a gap in the work offered to you.",
+      ];
+
+  const accent = expired ? { bg: "#fdecec", border: "#f3b6b6", text: "#9b1c1c", label: "EXPIRED" } : { bg: "#fff4e0", border: "#f5d08a", text: "#8a5200", label: today ? "EXPIRES TODAY" : "EXPIRING SOON" };
+  const li = (items: string[], ordered: boolean) => `<${ordered ? "ol" : "ul"} style="margin:8px 0 18px;padding-left:22px">${items.map((i) => `<li style="margin:0 0 7px">${esc(i)}</li>`).join("")}</${ordered ? "ol" : "ul"}>`;
 
   const html = layout(
-    expired
-      ? "Document expiré / Document expired"
-      : "Document à renouveler / Document to renew",
-    `<p>${esc(fr)}</p>
-<p style="color:#5b6b7c">${esc(en)}</p>
-<p style="margin-top:22px">${esc(sign)}</p>`
+    headline,
+    `<p style="margin:0 0 16px">${esc(intro)}</p>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 20px"><tr><td style="background:${accent.bg};border:1px solid ${accent.border};border-radius:10px;padding:14px 16px;color:${accent.text}">
+<div style="font-size:11px;font-weight:700;letter-spacing:.08em">${accent.label}</div>
+<div style="font-size:16px;font-weight:700;margin-top:2px">${esc(doc)}</div>
+<div style="font-size:14px;margin-top:2px">Expiry date: ${esc(date)}</div>
+</td></tr></table>
+<p style="margin:0;font-weight:700">What you need to do</p>${li(steps, true)}
+<p style="margin:0;font-weight:700">What may happen if it is not updated</p>${li(risks, false)}
+<p style="margin:0 0 6px">If you have already renewed this document, or you believe this message is a mistake, please let us know so we can update your file.</p>
+<p style="margin:18px 0 0">Thank you,<br><strong>${esc(p.company)}</strong></p>`,
+    p.company,
   );
 
-  return { subject, html, text: `${fr}\n\n${en}\n\n${sign}` };
+  const text = [
+    intro, "",
+    `Document: ${doc}`, `Expiry date: ${date}`, "",
+    "WHAT YOU NEED TO DO", ...steps.map((s, i) => `${i + 1}. ${s}`), "",
+    "WHAT MAY HAPPEN IF IT IS NOT UPDATED", ...risks.map((r) => `- ${r}`), "",
+    "If you have already renewed this document, or you believe this message is a mistake, please let us know so we can update your file.", "",
+    `Thank you,`, p.company,
+  ].join("\n");
+
+  return { subject, html, text };
 }
