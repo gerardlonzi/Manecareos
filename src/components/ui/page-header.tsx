@@ -14,7 +14,7 @@ export function PageHeader({ title, description, actions, children, toolbar, bac
     return () => { ro.disconnect(); document.documentElement.style.removeProperty("--sticky-h"); };
   }, []);
   return (
-    <div ref={ref} className="glass sticky top-[68px] z-30 -mx-4 border-b border-line px-4 pb-3 pt-5 sm:-mx-6 sm:px-6 lg:top-0 lg:-mx-8 lg:px-8">
+    <div ref={ref} data-fullbleed className="glass sticky top-[var(--app-header-h)] z-30 mb-5 border-b border-line pb-3 pt-4">
       {back ? <div className="mb-2">{back}</div> : null}
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
         <div className="min-w-0">

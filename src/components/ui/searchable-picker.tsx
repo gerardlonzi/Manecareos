@@ -5,7 +5,10 @@ import { usePreferences } from "@/components/providers/preferences-provider";
 import { Flag } from "./flag";
 import { cn } from "@/lib/utils";
 
-export type PickerOption = { value: string; label: string; description?: string; /** classe flag-icons, ex. « gb-sct » */ flag?: string; /** texte supplémentaire pour la recherche (autre langue, indicatif…) */ search?: string };
+export type PickerOption = { value: string; label: string; description?: string; /** classe flag-icons, ex. « gb-sct » */ flag?: string; /** texte supplémentaire pour la recherche (autre langue, indicatif…) */ search?: string; /** petite pastille colorée devant le libellé (ex. disponibilité) */ dot?: "green" | "red" | "amber" };
+
+const DOT = { green: "bg-success", red: "bg-danger", amber: "bg-[#f59e0b]" } as const;
+const Dot = ({ color }: { color: keyof typeof DOT }) => <span aria-hidden className={cn("h-2.5 w-2.5 shrink-0 rounded-full", DOT[color])} />;
 type Props = { id: string; value: string; options: PickerOption[]; onValueChange: (value: string) => void; placeholder?: string; searchPlaceholder?: string; disabled?: boolean; name?: string; className?: string; required?: boolean; clearable?: boolean; invalid?: boolean; /** Zone de recherche : auto = visible si plus de 7 options */ searchable?: boolean | "auto"; size?: "sm" | "md" };
 
 const norm = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLocaleLowerCase();
@@ -51,6 +54,7 @@ export function SearchablePicker({ id, value, options, onValueChange, placeholde
         className={cn("flex w-full items-center justify-between gap-2 rounded-lg border border-line bg-surface px-3 text-left text-sm text-ink hover:border-primary/40 focus-visible:border-primary focus-visible:ring-4 focus-visible:ring-primary/10 disabled:cursor-not-allowed disabled:opacity-60 aria-[invalid=true]:border-danger", size === "sm" ? "h-9" : "h-10")}>
         <span className="flex min-w-0 items-center gap-2">
           {selected?.flag ? <Flag flag={selected.flag} /> : null}
+          {selected?.dot ? <Dot color={selected.dot} /> : null}
           <span className={cn("truncate", !selected && "text-muted")}>{selected?.label ?? placeholder ?? t("Sélectionner…", "Select…")}</span>
         </span>
         <ChevronDown className={cn("h-4 w-4 shrink-0 text-muted transition-transform", open && "rotate-180")} aria-hidden />
@@ -70,6 +74,7 @@ export function SearchablePicker({ id, value, options, onValueChange, placeholde
               <button type="button" role="option" aria-selected={o.value === value} data-i={i} key={o.value} onClick={() => choose(o)} onMouseEnter={() => setActive(i)}
                 className={cn("flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm", i === active && "bg-primary-soft", o.value === value && "font-semibold text-primary")}>
                 {o.flag ? <Flag flag={o.flag} /> : null}
+                {o.dot ? <Dot color={o.dot} /> : null}
                 <span className="min-w-0 flex-1"><span className="block truncate">{o.label}</span>{o.description ? <span className="block truncate text-xs font-normal text-muted">{o.description}</span> : null}</span>
                 {o.value === value ? <Check className="h-4 w-4 shrink-0" aria-hidden /> : null}
               </button>
