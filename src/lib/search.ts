@@ -3,6 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { APP_CONFIG } from "@/config/app";
 import { signPhotoUrls } from "@/lib/photos";
+import { complianceFor, currentWeekHours } from "@/lib/compliance";
 import { haversineMeters, isValidCoordinate, type LatLon } from "@/lib/geo/haversine";
 import type { CandidateDTO, NearbyResult, SearchParams, SearchTarget } from "@/lib/search-types";
 import type { AssignmentStatus, Mission } from "@/lib/types";
@@ -81,7 +82,12 @@ export async function findNearbyCandidates(supabase: SupabaseClient, params: Sea
   if (skills.length > 0) ex = ex.contains("skills", skills);
   const { count: excluded } = await ex;
 
-  const photoUrls = await signPhotoUrls(supabase, kept.map((r) => ({ id: r.id, photo_path: r.photo_path })));
+  const [photoUrls, comp, weekMap] = await Promise.all([
+    signPhotoUrls(supabase, kept.map((r) => ({ id: r.id, photo_path: r.photo_path }))),
+    complianceFor(supabase, kept.map((r) => r.id)),
+    // Semaine de la mission si elle est planifiée, sinon la semaine en cours (aujourd'hui).
+    currentWeekHours(supabase, t.mission?.scheduled_start_at ? new Date(t.mission.scheduled_start_at) : new Date()),
+  ]);
 
   const candidates: CandidateDTO[] = kept.map((r) => ({
     id: r.id, fullName: r.full_name, staffCode: r.staff_code, phone: r.phone, email: r.email,
@@ -93,6 +99,8 @@ export async function findNearbyCandidates(supabase: SupabaseClient, params: Sea
     straightLineM: haversineMeters(t.origin, r) ?? r.straight_line_m,
     photoUrl: photoUrls[r.id] ?? null,
     weeklyHours: r.weekly_hours === undefined || r.weekly_hours === null ? null : Number(r.weekly_hours),
+    weekUsed: weekMap.get(r.id)?.total ?? 0,
+    compliance: comp.byStaff.get(r.id) ?? null,
     assignment: assignments.get(r.id) ?? null,
   }));
   candidates.sort((a, b) => a.straightLineM - b.straightLineM);

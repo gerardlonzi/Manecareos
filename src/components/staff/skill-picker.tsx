@@ -2,12 +2,12 @@
 import * as React from "react";
 import { MultiCombobox, type ComboOption } from "@/components/ui/combobox";
 import { usePreferences } from "@/components/providers/preferences-provider";
-import { SKILL_CATALOG, SKILL_GROUPS, skillLabel } from "@/config/skills";
+import { SKILL_CATALOG, SKILL_GROUPS, skillLabel, skillSearchText } from "@/config/skills";
 
 /** Options de compétences, libellées dans la langue de l’interface (« carer » en EN, « aide-soignant(e) » en FR) mais cherchables dans les deux. */
 export function useSkillOptions(): ComboOption[] {
   const { locale } = usePreferences();
-  return React.useMemo(() => SKILL_CATALOG.map((s) => ({ value: s.id, label: s[locale], group: SKILL_GROUPS[s.group][locale], keywords: `${s.fr} ${s.en}` })), [locale]);
+  return React.useMemo(() => SKILL_CATALOG.map((s) => ({ value: s.id, label: s[locale], group: SKILL_GROUPS[s.group][locale], keywords: skillSearchText(s) })), [locale]);
 }
 
 export function SkillPicker({ value, onChange, id = "skills-search", placeholder }: { value: string; onChange: (value: string) => void; id?: string; placeholder?: string }) {
@@ -25,7 +25,7 @@ export function SkillChips({ skills, max = 2 }: { skills: string[]; max?: number
   const shown = skills.slice(0, max), rest = skills.length - shown.length;
   const all = skills.map((s) => skillLabel(s, locale)).join(", ");
   return (
-    <span className="flex max-w-full items-center gap-1 overflow-hidden whitespace-nowrap" title={all}>
+    <span className="flex max-w-[12rem] flex-wrap items-center gap-1" title={all}>
       {shown.map((s) => <span key={s} className="truncate rounded bg-primary-soft px-1.5 py-0.5 text-[11px] font-medium text-primary">{skillLabel(s, locale)}</span>)}
       {rest > 0 ? <span className="shrink-0 rounded bg-muted/10 px-1.5 py-0.5 text-[11px] font-medium text-muted" aria-label={t(`${rest} autres compétences`, `${rest} more skills`)}>+{rest}</span> : null}
     </span>

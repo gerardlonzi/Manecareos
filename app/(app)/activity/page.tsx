@@ -54,7 +54,6 @@ export default async function ActivityPage({ searchParams }: { searchParams: Pro
 
   const rows = (data ?? []) as ActivityLog[];
   const hasFilters = Boolean(type || from || to || missionId || staffQ);
-  const hrefFor = (p: number) => `/activity${toQuery({ type, from, to, mission: missionId, staff: staffQ, page: p <= 1 ? "" : p })}`;
 
   const loc = (await getLocale());
   const dayKey = (iso: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, dateStyle: "short" }).format(new Date(iso));

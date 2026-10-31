@@ -37,7 +37,7 @@ function useL<K extends keyof typeof L>(group: K, key: keyof (typeof L)[K]) {
 
 export function AvailabilityBadge({ status }: { status: AvailabilityStatus }) {
   const label = useL("availability", status);
-  return <Badge dot tone={status === "available" ? "green" : status === "unavailable" ? "red" : "gray"}>{label}</Badge>;
+  return <Badge dot tone={status === "available" ? "green" : status === "unavailable" ? "red" : "amber"}>{label}</Badge>;
 }
 export function LocationBadge({ status }: { status: LocationStatus }) {
   const label = useL("location", status);

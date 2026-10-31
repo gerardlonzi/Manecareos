@@ -149,7 +149,7 @@ export async function getTravelOptions(raw: unknown): Promise<ActionResult<Trave
     await mapWithConcurrency([...REAL_MODES], 3, async (mode: RealMode) => {
       const map = await getRouteEstimates(supabase, user.id, [origin], t.origin, mode);
       let est: RouteEstimate | undefined = map.get(origin.id);
-      if (est && est.status !== "ok" && est.status !== "approximate" && profile.allow_fallback_estimates) {
+      if (est && est.status !== "ok" && est.status !== "approximate") {
         est = approximateEstimate(mode, { straightLineM }) ?? est;
       }
       if (est) options[mode] = est;

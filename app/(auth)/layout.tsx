@@ -31,8 +31,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
             <button type="button" onClick={() => setTheme(theme === "light" ? "dark" : "light")} className="grid h-9 w-9 place-items-center rounded-lg border border-line bg-surface text-muted hover:bg-primary-soft" aria-label={t("Changer de thème", "Toggle theme")}>{theme === "light" ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}</button>
           </div>
         </div>
-        <div className="mx-auto flex w-full max-w-md flex-1 flex-col justify-center py-10">
-          <div className="card-surface anim-rise p-6 sm:p-8">{children}</div>
+        <div className="mx-auto flex w-full max-w-xl flex-1 flex-col justify-center py-10">
+          <div className="anim-rise p-6 sm:p-8">{children}</div>
           <p className="mt-6 flex items-center justify-center gap-2 text-center text-xs text-muted"><ShieldCheck className="h-3.5 w-3.5" aria-hidden />{t("Vos données restent privées à votre compte.", "Your data stays private to your account.")}</p>
         </div>
       </section>

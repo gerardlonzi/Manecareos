@@ -33,8 +33,9 @@ export function LoginForm({ next }: { next?: string }) {
         for (const [k, m] of Object.entries(r.fieldErrors ?? {})) if (k === "email" || k === "password") setError(k, { message: m });
         return;
       }
-      toast.success(t("Connexion réussie", "Signed in successfully"));
-      router.replace(r.data?.redirectTo ?? "/dashboard");
+      const to = r.data?.redirectTo ?? "/dashboard";
+      if (!to.startsWith("/auth/verify")) toast.success(t("Connexion réussie", "Signed in successfully"));
+      router.replace(to);
       router.refresh();
     });
   };

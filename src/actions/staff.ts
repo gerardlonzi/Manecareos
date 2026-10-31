@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { APP_CONFIG } from "@/config/app";
 import { logActivity, notify } from "@/lib/activity";
+import { notifyWeeklyCap } from "@/lib/compliance";
+import { parseHoursInput } from "@/lib/hours";
 import { mapWithConcurrency } from "@/lib/concurrency";
 import { computeLocation, type LocationPrev } from "@/lib/location/apply";
 import { resolveLocation, resolveMany } from "@/lib/location/service";
@@ -295,5 +297,22 @@ export async function removeStaffPhoto(staffId: string): Promise<ActionResult> {
     revalidatePath(`/staff/${staffId}`);
     refresh();
     return { ok: true, message: "Photo supprimée" };
+  });
+}
+
+/** Modifie les heures de travail hebdomadaires d'un staff (vide = aucun plafond) et alerte si le plafond est déjà atteint. */
+export async function setWeeklyHours(staffId: string, raw: string): Promise<ActionResult<{ weekly_hours: number | null }>> {
+  return withSession(async ({ supabase, user }) => {
+    if (!uuidSchema.safeParse(staffId).success) return { ok: false, error: "Requête invalide" };
+    const v = raw.trim();
+    const hours = v === "" ? null : parseHoursInput(v);
+    if (v !== "" && (hours === null || hours > 168)) return { ok: false, error: "Heures invalides (ex. 7,5 ou 7h30)", fieldErrors: { weekly_hours: "Entre 0 et 168 heures" } };
+    const { data, error } = await supabase.from("staff").update({ weekly_hours: hours }).eq("id", staffId).select("*").maybeSingle();
+    if (error || !data) return { ok: false, error: "Enregistrement impossible. Réessayez." };
+    const staff = data as Staff;
+    await logActivity(supabase, user.id, { event_type: "staff_updated", staff_id: staffId, description: `Heures hebdomadaires de ${staff.full_name} : ${hours ?? "aucun plafond"}` });
+    await notifyWeeklyCap(supabase, user.id, staff, null);
+    revalidatePath("/staff"); revalidatePath(`/staff/${staffId}`); revalidatePath("/find-staff"); revalidatePath("/hours");
+    return { ok: true, data: { weekly_hours: hours }, message: "Heures enregistrées" };
   });
 }

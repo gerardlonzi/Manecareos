@@ -1,5 +1,4 @@
 import { FindStaffClient } from "@/components/search/find-staff-client";
-import { PageHeader } from "@/components/ui/card";
 import { requireSession } from "@/lib/auth";
 import { mapboxPublicToken } from "@/lib/env";
 import { getRoutingCapabilities } from "@/lib/routing/service";
@@ -13,11 +12,7 @@ export default async function FindStaffPage() {
 
   return (
     <>
-      <PageHeader
-        title="Trouver du staff"
-        description="Recherche géographique sans mission : indiquez un lieu, obtenez les staff disponibles les plus proches."
-      />
-
+      {/* Pas de bandeau de titre ici : le menu indique déjà la page, et les blocs collants restent bien sous l’en-tête. */}
       <FindStaffClient
         defaultCountry={profile.country_code}
         routing={getRoutingCapabilities()}
@@ -26,7 +21,8 @@ export default async function FindStaffPage() {
         timeZone={profile.timezone}
         defaults={{
           radiusKm: profile.default_search_radius_km,
-          availability: profile.default_availability_filter,
+          // Les indisponibles restent visibles (marqués en rouge) : le filtre « disponibles uniquement » se choisit dans les filtres.
+          availability: "all",
           mode: profile.default_transport_mode,
         }}
       />

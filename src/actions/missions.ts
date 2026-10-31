@@ -7,6 +7,7 @@ import { computeLocation, type LocationPrev } from "@/lib/location/apply";
 import { getRoutingCapabilities } from "@/lib/routing/service";
 import { syncMissionStatus } from "@/lib/missions";
 import { zonedLocalToUtcIso } from "@/lib/time";
+import { hoursBetween, parseHoursInput } from "@/lib/hours";
 import type { ActionResult, Mission, MissionOverview, MissionStatus } from "@/lib/types";
 import { fieldErrorsFrom, missionInputSchema, uuidSchema } from "@/lib/validation";
 import { isUniqueViolation, withSession } from "./helpers";
@@ -41,6 +42,18 @@ export async function saveMission(raw: unknown, id?: string): Promise<ActionResu
           ? "Les estimations en transports en commun ne sont pas prises en charge (aucun fournisseur d'horaires configuré)."
           : "Mode de transport non pris en charge.";
     }
+    // Heures prévues : saisies (« 7,5 » ou « 7h30 ») ou calculées automatiquement depuis début/fin.
+    let plannedHours: number | null = null;
+    if (input.planned_hours) {
+      plannedHours = parseHoursInput(input.planned_hours);
+      if (plannedHours === null || plannedHours > 744) fieldErrors.planned_hours = "Heures invalides (ex. 7,5 ou 7h30)";
+    } else plannedHours = hoursBetween(start, end);
+    let payRate: number | null = null;
+    if (input.pay_rate) {
+      const n = Number(input.pay_rate.replace(",", "."));
+      if (!Number.isFinite(n) || n < 0 || n > 100000) fieldErrors.pay_rate = "Montant invalide";
+      else payRate = Math.round(n * 100) / 100;
+    }
     if (Object.keys(fieldErrors).length > 0) return { ok: false, error: "Formulaire invalide", fieldErrors };
 
     let prev: Mission | null = null;
@@ -62,6 +75,11 @@ export async function saveMission(raw: unknown, id?: string): Promise<ActionResu
       required_staff_count: input.required_staff_count,
       scheduled_start_at: start,
       scheduled_end_at: end,
+      planned_hours: plannedHours,
+      workplace_type: input.workplace_type,
+      workplace_name: input.workplace_name,
+      pay_rate: payRate,
+      pay_currency: input.pay_currency,
       transport_mode: input.transport_mode,
       notes: input.notes,
       ...loc.fields,

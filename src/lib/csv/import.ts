@@ -1,7 +1,8 @@
 import Papa from "papaparse";
 import { z } from "zod";
 import { APP_CONFIG } from "@/config/app";
-import { getCountry } from "@/config/countries";
+import { COUNTRY_OPTIONS, getCountry } from "@/config/countries";
+import { resolveSkillToken } from "@/config/skills";
 import { normalizePostalCode } from "@/lib/geo/postal";
 import { normalizePhone } from "@/lib/phone";
 import type { AvailabilityStatus } from "@/lib/types";
@@ -45,19 +46,47 @@ const AVAILABILITY_MAP: Record<string, AvailabilityStatus> = {
   unknown: "unknown", inconnu: "unknown", inconnue: "unknown", "": "unknown",
 };
 
+/** « SW / HCA », « support worker; nurse » → identifiants canoniques (SW → support worker, HCA → healthcare assistant). */
 export function parseSkills(raw: string | undefined): string[] {
   if (!raw) return [];
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const s of raw.split(/[;|,]/)) {
-    const t = s.trim();
-    const k = t.toLowerCase();
-    if (t && t.length <= 60 && !seen.has(k)) {
-      seen.add(k);
-      out.push(t);
-    }
+  const push = (t: string) => {
+    const clean = t.trim();
+    if (!clean || clean.length > 60) return;
+    const id = resolveSkillToken(clean) ?? clean;
+    const k = id.toLowerCase();
+    if (!seen.has(k)) { seen.add(k); out.push(id); }
+  };
+  for (const part of raw.split(/[;|,]/)) {
+    // « driver / own transport » est une compétence du catalogue : on la reconnaît avant de séparer sur « / ».
+    if (resolveSkillToken(part)) push(part);
+    else for (const sub of part.split(/[/+&]/)) push(sub);
   }
   return out.slice(0, 30);
+}
+
+/** « 20hours », « 20 h », « Full Time » (= 37,5 h), « 37.5 » → heures par semaine. */
+export const FULL_TIME_HOURS = 37.5;
+export function parseWeeklyHours(raw: string): number | null | "invalid" {
+  const v = raw.trim().toLowerCase().replace(",", ".");
+  if (!v) return null;
+  if (/^(full[\s-]?time|temps plein|ft)$/.test(v)) return FULL_TIME_HOURS;
+  const m = v.match(/^(\d{1,3}(?:\.\d{1,2})?)\s*(h|hr|hrs|hour|hours|heures?)?(\s*(\/|per|par)\s*(week|wk|semaine))?$/);
+  if (!m) return "invalid";
+  const n = Number(m[1]);
+  return n >= 0 && n <= 168 ? n : "invalid";
+}
+
+/** « England », « Royaume-Uni », « GB » → code pays (+ nation britannique éventuelle). */
+export function resolveCountry(raw: string): { code: string; nation: string | null } | null {
+  const v = raw.trim();
+  if (!v) return null;
+  if (/^[A-Za-z]{2}$/.test(v)) return { code: v.toUpperCase(), nation: null };
+  const k = v.toLowerCase();
+  if (["uk", "united kingdom", "royaume-uni", "royaume uni", "great britain"].includes(k)) return { code: "GB", nation: null };
+  const o = COUNTRY_OPTIONS.find((c) => c.fr.toLowerCase() === k || c.en.toLowerCase() === k || c.nation?.toLowerCase() === k);
+  return o ? { code: o.code, nation: o.nation } : null;
 }
 
 export type ParsedStaffRow = {
@@ -72,9 +101,12 @@ export type ParsedStaffRow = {
   city: string | null;
   region: string | null;
   skills: string[];
-  availability_status: AvailabilityStatus;
+  /** null = colonne vide : à la mise à jour, la valeur existante est conservée. */
+  availability_status: AvailabilityStatus | null;
   notes: string | null;
   weekly_hours: number | null;
+  /** « create » : nouvelle fiche ; « update » : fiche existante (même code ou même e-mail) mise à jour. */
+  action: "create" | "update";
 };
 
 export type RowIssue = { rowNumber: number; field: string; message: string; raw?: string };
@@ -84,6 +116,8 @@ export type ImportParseResult = {
   missingRequired: string[];
   rows: ParsedStaffRow[];
   issues: RowIssue[];
+  warnings: RowIssue[];
+  skippedEmpty: number;
   totalRows: number;
   truncated: boolean;
 };
@@ -108,8 +142,10 @@ export function parseStaffCsv(
   if (!mappedFields.has("full_name")) missingRequired.push("full_name");
 
   const issues: RowIssue[] = [];
+  const warnings: RowIssue[] = [];
+  let skippedEmpty = 0;
   if (missingRequired.length > 0) {
-    return { headers: headerMap, missingRequired, rows: [], issues, totalRows: parsed.data.length, truncated: false };
+    return { headers: headerMap, missingRequired, rows: [], issues, warnings, skippedEmpty, totalRows: parsed.data.length, truncated: false };
   }
 
   const seenCodes = new Map<string, number>();
@@ -129,17 +165,22 @@ export function parseStaffCsv(
     };
     const before = issues.length;
     const bad = (field: string, message: string, raw?: string) => issues.push({ rowNumber, field, message, raw });
+    const warn = (field: string, message: string, raw?: string) => warnings.push({ rowNumber, field, message, raw });
+
+    // Ligne « fantôme » (ni nom, ni code, ni contact, ni adresse) : ignorée sans erreur (cellule résiduelle, formule orpheline…).
+    if (!get("full_name") && !get("staff_code") && !get("phone") && !get("email") && !get("postal_code") && !get("city")) { skippedEmpty++; return; }
 
     const fullName = get("full_name");
     if (!fullName) bad("full_name", "Nom complet obligatoire");
     else if (fullName.length > 200) bad("full_name", "Nom trop long (200 caractères max)");
 
-    let country = get("country_code").toUpperCase() || defaultCountry;
-    if (!/^[A-Z]{2}$/.test(country)) {
-      bad("country_code", "Code pays invalide (2 lettres, ex. GB)", country);
-      country = defaultCountry;
-    } else if (!getCountry(country)) {
-      // Pays non listé : accepté, validation du code postal souple.
+    let country = defaultCountry;
+    let nation: string | null = null;
+    const rawCountry = get("country_code");
+    if (rawCountry) {
+      const rc = resolveCountry(rawCountry);
+      if (rc) { country = rc.code; nation = rc.nation; }
+      else bad("country_code", "Pays non reconnu (ex. England, Wales, GB, FR)", rawCountry);
     }
 
     const rawPostal = get("postal_code");
@@ -157,7 +198,7 @@ export function parseStaffCsv(
     let email: string | null = null;
     if (rawEmail) {
       if (emailSchema.safeParse(rawEmail).success) email = rawEmail.toLowerCase();
-      else bad("email", "Adresse e-mail invalide", rawEmail);
+      else warn("email", "Adresse e-mail invalide : ignorée (la fiche est importée sans e-mail)", rawEmail);
     }
 
     const rawPhone = get("phone");
@@ -169,23 +210,26 @@ export function parseStaffCsv(
     }
 
     const rawAvail = get("availability").toLowerCase();
-    const availability = AVAILABILITY_MAP[rawAvail];
+    const availability = rawAvail === "" ? null : AVAILABILITY_MAP[rawAvail];
     if (availability === undefined) bad("availability", "Valeur inconnue (available, unavailable, unknown)", rawAvail);
 
     const code = get("staff_code") || null;
+    let action: "create" | "update" = "create";
     if (code) {
       const k = code.toLowerCase();
       const firstSeen = seenCodes.get(k);
       if (firstSeen !== undefined) bad("staff_code", `Doublon dans le fichier (déjà ligne ${firstSeen})`, code);
-      else if (existingCodes.has(k)) bad("staff_code", "Ce code staff existe déjà", code);
-      else seenCodes.set(k, rowNumber);
+      else { seenCodes.set(k, rowNumber); if (existingCodes.has(k)) action = "update"; }
     }
     if (email) {
       const firstSeen = seenEmails.get(email);
-      if (firstSeen !== undefined) bad("email", `Doublon dans le fichier (déjà ligne ${firstSeen})`, email);
-      else if (existingEmails.has(email)) bad("email", "Cet e-mail existe déjà", email);
-      else seenEmails.set(email, rowNumber);
+      if (firstSeen !== undefined) { warn("email", `E-mail déjà utilisé ligne ${firstSeen} : ignoré pour cette ligne`, email); email = null; }
+      else { seenEmails.set(email, rowNumber); if (existingEmails.has(email)) action = "update"; }
     }
+
+    const rawWeekly = get("weekly_hours");
+    const weekly = parseWeeklyHours(rawWeekly);
+    if (weekly === "invalid") warn("weekly_hours", "Heures par semaine non reconnues (ex. 20, 20hours, Full Time) : ignorées", rawWeekly);
 
     if (issues.length > before) return; // ligne rejetée : jamais importée partiellement
     rows.push({
@@ -198,26 +242,27 @@ export function parseStaffCsv(
       postal_code: postalDisplay,
       postal_code_normalized: postalKey,
       city: get("city") || null,
-      region: get("region") || null,
+      region: get("region") || nation,
       skills: parseSkills(get("skills")),
-      availability_status: availability ?? "unknown",
+      availability_status: availability ?? null,
       notes: get("notes").slice(0, 4000) || null,
-      weekly_hours: (() => { const n = Number(get("weekly_hours").replace(",", ".")); return get("weekly_hours") !== "" && Number.isFinite(n) && n >= 0 && n <= 168 ? n : null; })(),
+      weekly_hours: weekly === "invalid" ? null : weekly,
+      action,
     });
   });
 
-  return { headers: headerMap, missingRequired, rows, issues, totalRows: parsed.data.length, truncated };
+  return { headers: headerMap, missingRequired, rows, issues, warnings, skippedEmpty, totalRows: parsed.data.length - skippedEmpty, truncated };
 }
 
+/** Colonnes du modèle (identiques au fichier Excel de référence). */
+export const TEMPLATE_HEADERS = ["Code", "full_name", "Phone", "email", "country", "POSTCODE", "city", "region", "skills", "availability", "notes", "weekly hours"] as const;
+export const TEMPLATE_EXAMPLES: (string | number)[][] = [
+  ["C111002", "AMANDA HUDSON", "07867057833", "amanda.hudson@example.com", "England", "M6 5JF", "Salford", "North West", "SW / HCA", "", "", "20hours"],
+  ["C051289", "JOHN SMITH", "07350171823", "john.smith@example.com", "England", "S40 2SR", "Chesterfield", "East Midlands", "SW / HCA", "available", "Night shifts", "Full Time"],
+];
+
 export function importTemplateCsv(): string {
-  return toCsv(
-    CSV_FIELDS,
-    [
-      ["Jane Doe", "S-001", "+44 7700 900123", "jane.doe@example.com", "GB", "SW1A 1AA", "London", "Greater London", "care assistant;night care", "available", "Exemple", "37.5"],
-      ["Paul Mbarga", "S-002", "677 00 00 00", "", "CM", "", "Douala", "Littoral", "housekeeper", "unknown", "", "20"],
-    ],
-    { bom: true },
-  );
+  return toCsv(TEMPLATE_HEADERS, TEMPLATE_EXAMPLES, { bom: true });
 }
 
 export function errorReportCsv(issues: readonly RowIssue[]): string {

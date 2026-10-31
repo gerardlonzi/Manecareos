@@ -1,8 +1,9 @@
 "use client";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { cn, toQuery } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { usePreferences } from "@/components/providers/preferences-provider";
+import { toQuery } from "@/lib/utils";
 
 export function Pagination({ page, pageSize, total, basePath, params = {} }: { page: number; pageSize: number; total: number; basePath: string; params?: Record<string, string | number | null | undefined> }) {
   // Les liens sont construits ici (côté client) : une fonction ne peut pas être passée depuis une page serveur.

@@ -1,6 +1,7 @@
 
 import Link from "next/link";
 import {
+  ShieldAlert,
   Activity,
   ArrowRight,
   ArrowUpRight,
@@ -22,6 +23,7 @@ import { getLocale } from "@/lib/i18n-server";
 import { describeActivity } from "@/lib/messages";
 import { MissionStatusBadge } from "@/components/ui/badge";
 import { requireSession } from "@/lib/auth";
+import { complianceFor } from "@/lib/compliance";
 import type { ActivityLog, Mission } from "@/lib/types";
 
 export const metadata = { title: "Vue d’ensemble" };
@@ -84,7 +86,7 @@ export default async function DashboardPage() {
           </p>
 
           <div className="mt-3">
-            <RefreshButton label="Réessayer" />
+            <RefreshButton label="Réessayer / Try again" />
           </div>
         </Alert>
       </>
@@ -98,12 +100,20 @@ export default async function DashboardPage() {
   const when = (iso: string | null) => iso ? new Intl.DateTimeFormat(loc === "fr" ? "fr-FR" : "en-GB", { timeZone: profile.timezone, dateStyle: "medium", timeStyle: "short" }).format(new Date(iso)) : "—";
   const greeting = profile.full_name?.split(" ")[0] ?? "";
 
+  // Conformité : dossiers incomplets / documents qui expirent bientôt (staff actifs).
+  const { data: activeStaff } = await supabase.from("staff").select("id").is("archived_at", null).limit(1000);
+  const comp = await complianceFor(supabase, ((activeStaff ?? []) as { id: string }[]).map((x) => x.id));
+  const incomplete = [...comp.byStaff.values()].filter((c) => !c.complete).length;
+  const expiringSoon = [...comp.byStaff.values()].filter((c) => c.level === "expiring").length;
+
   const kpis = [
     { key: "staff", href: "/staff", icon: Users, fr: "Staff actif", en: "Active staff", value: s.total_staff, tone: "primary" },
     { key: "avail", href: "/staff?availability=available", icon: UserCheck, fr: "Disponibles", en: "Available", value: s.available_staff, tone: "success" },
     { key: "missions", href: "/missions", icon: BriefcaseBusiness, fr: "Missions en cours", en: "Active assignments", value: s.active_missions, tone: "primary" },
     { key: "need", href: "/missions?status=open", icon: CalendarClock, fr: "À pourvoir", en: "Need staff", value: s.missions_needing_staff, tone: s.missions_needing_staff > 0 ? "warning" : "success" },
     { key: "loc", href: "/staff?location=resolved", icon: MapPin, fr: "Localisations vérifiées", en: "Verified locations", value: s.verified_locations, tone: "success" },
+    { key: "docs", href: "/staff", icon: ShieldAlert, fr: "Dossiers incomplets", en: "Incomplete files", value: incomplete, tone: incomplete > 0 ? "danger" : "success" },
+    { key: "expiring", href: "/staff", icon: CalendarClock, fr: "Documents bientôt expirés", en: "Documents expiring soon", value: expiringSoon, tone: expiringSoon > 0 ? "warning" : "success" },
     { key: "review", href: "/staff?location=failed", icon: Clock3, fr: "À revoir", en: "To review", value: s.unresolved_locations, tone: s.unresolved_locations > 0 ? "danger" : "muted" },
   ] as const;
   const tone = { primary: "bg-primary-soft text-primary", success: "bg-success-soft text-success", warning: "bg-warning-soft text-warning", danger: "bg-danger-soft text-danger", muted: "bg-muted/10 text-muted" };
@@ -116,7 +126,7 @@ export default async function DashboardPage() {
         actions={<><RefreshButton /><LinkButton href="/find-staff" variant="secondary"><UserRoundSearch className="h-4 w-4" aria-hidden /><T fr="Trouver du staff" en="Find staff" /></LinkButton><LinkButton href="/missions/new"><Plus className="h-4 w-4" aria-hidden /><T fr="Nouvelle mission" en="New assignment" /></LinkButton></>}
       />
       <div className="space-y-6 py-5">
-        <div className="stagger grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+        <div className="stagger grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-4">
           {kpis.map((k) => (
             <Link key={k.key} href={k.href} className="card-surface lift group block p-4">
               <span className={`grid h-9 w-9 place-items-center rounded-lg ${tone[k.tone]}`}><k.icon className="h-[18px] w-[18px]" aria-hidden /></span>

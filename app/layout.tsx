@@ -4,8 +4,6 @@ import { APP_CONFIG } from "@/config/app";
 import "./globals.css";
 import { PreferencesProvider } from "@/components/providers/preferences-provider";
 import { getLocale, getTheme } from "@/lib/i18n-server";
-import "flag-icons/css/flag-icons.min.css";
-import "./globals.css";
 
 export const metadata: Metadata = {
   title: { default: `${APP_CONFIG.name} — ${APP_CONFIG.company}`, template: `%s · ${APP_CONFIG.name}` },

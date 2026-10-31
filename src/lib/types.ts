@@ -15,6 +15,7 @@ export type Profile = {
   default_availability_filter: "available" | "all";
   distance_unit: "km" | "mi";
   allow_fallback_estimates: boolean;
+  auto_email_documents?: boolean;
 };
 
 export type Staff = {
@@ -65,6 +66,13 @@ export type Mission = {
   required_staff_count: number;
   scheduled_start_at: string | null;
   scheduled_end_at: string | null;
+  /** Heures prévues, paie horaire et devise (optionnels). */
+  planned_hours: number | null;
+  /** Lieu principal : type d'établissement + nom */
+  workplace_type: string | null;
+  workplace_name: string | null;
+  pay_rate: number | null;
+  pay_currency: string;
   transport_mode: TransportMode;
   status: MissionStatus;
   notes: string | null;
@@ -84,6 +92,11 @@ export type MissionStaff = {
   selected_at: string;
   updated_at: string;
   notes: string | null;
+  shift_start_at: string | null;
+  shift_end_at: string | null;
+  hours_worked: number | null;
+  pay_rate: number | null;
+  completed_at: string | null;
 };
 
 export type ActivityLog = {
@@ -106,8 +119,12 @@ export type Notification = {
   link: string | null;
   read_at: string | null;
   created_at: string;
+  metadata?: Record<string, unknown>;
+  email_sent_at?: string | null;
 };
+
+import type { GuardIssue } from "./assignment-guard";
 
 export type ActionResult<T = undefined> =
   | { ok: true; data?: T; message?: string }
-  | { ok: false; error: string; fieldErrors?: Record<string, string> };
+  | { ok: false; error: string; fieldErrors?: Record<string, string>; issues?: GuardIssue[] };

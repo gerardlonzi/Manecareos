@@ -57,7 +57,7 @@ export default async function NotificationsPage({ searchParams }: { searchParams
         {items.length > 0 ? (
           <>
             <NotificationList items={items} timeZone={profile.timezone} />
-            <Pagination page={page} pageSize={pageSize} total={count ?? 0} basePath="/notifications" params={{ q, filter: filter === "unread" ? "unread" : "" }}/>
+            <Pagination page={page} pageSize={pageSize} total={count ?? 0} basePath="/notifications" params={{ q, filter: filter === "unread" ? "unread" : "" }} />
           </>
         ) : null}
       </div>

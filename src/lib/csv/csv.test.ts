@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { escapeCsvCell, toCsv } from "./export";
-import { errorReportCsv, importTemplateCsv, normalizeHeader, parseSkills, parseStaffCsv } from "./import";
+import { errorReportCsv, importTemplateCsv, normalizeHeader, parseSkills, parseStaffCsv, parseWeeklyHours } from "./import";
 
 describe("escapeCsvCell", () => {
   it("échappe virgules, guillemets et retours à la ligne", () => {
@@ -54,7 +54,7 @@ describe("parseStaffCsv", () => {
     });
   });
   it("disponibilité vide = unknown, jamais available", () => {
-    expect(parseStaffCsv(header + "A,,,,GB,,London,,,,\n").rows[0]?.availability_status).toBe("unknown");
+    expect(parseStaffCsv(header + "A,,,,GB,,London,,,,\n").rows[0]?.availability_status).toBeNull(); // « non renseigné » : devient « unknown » à la création, ne change rien à la mise à jour
   });
   it("rejette une disponibilité inconnue au lieu de la deviner", () => {
     const r = parseStaffCsv(header + "A,,,,GB,,London,,,peut-etre,\n");
@@ -62,21 +62,44 @@ describe("parseStaffCsv", () => {
     expect(r.issues[0]).toMatchObject({ field: "availability", rowNumber: 2 });
   });
   it("erreurs par ligne : nom, e-mail, code postal, téléphone", () => {
-    const r = parseStaffCsv(header + ",,,,GB,,,,,,\nB,,abc,bad,GB,12345,,,,,\n");
+    const r = parseStaffCsv(header + ",,,,GB,,London,,,,\nB,,abc,bad,GB,12345,,,,,\n");
     const fields = r.issues.map((i) => `${i.rowNumber}:${i.field}`);
     expect(fields).toContain("2:full_name");
-    expect(fields).toContain("3:email");
     expect(fields).toContain("3:postal_code");
     expect(fields).toContain("3:phone");
     expect(r.rows).toHaveLength(0);
   });
-  it("détecte les doublons dans le fichier et en base", () => {
-    const r = parseStaffCsv(header + "A,S1,,a@x.com,GB,,L,,,,\nB,S1,,b@x.com,GB,,L,,,,\nC,S9,,a@x.com,GB,,L,,,,\nD,S2,,,GB,,L,,,,\n", {
-      existingCodes: ["s2"],
-    });
-    expect(r.rows.map((x) => x.full_name)).toEqual(["A"]);
-    const msgs = r.issues.map((i) => `${i.rowNumber}:${i.field}`);
-    expect(msgs).toEqual(expect.arrayContaining(["3:staff_code", "4:email", "5:staff_code"]));
+  it("doublon de code dans le fichier = rejeté ; code déjà en base = mise à jour", () => {
+    const r = parseStaffCsv(header + "A,S1,,a@x.com,GB,,L,,,,\nB,S1,,b@x.com,GB,,L,,,,\nC,S9,,a@x.com,GB,,L,,,,\nD,S2,,,GB,,L,,,,\n", { existingCodes: ["s2"] });
+    expect(r.rows.map((x) => `${x.full_name}:${x.action}`)).toEqual(["A:create", "C:create", "D:update"]);
+    expect(r.issues.map((i) => `${i.rowNumber}:${i.field}`)).toEqual(["3:staff_code"]);
+    expect(r.warnings.map((i) => `${i.rowNumber}:${i.field}`)).toEqual(["4:email"]);
+  });
+  it("e-mail invalide = avertissement, la ligne est importée sans e-mail", () => {
+    const r = parseStaffCsv("full_name,email\nA,bad@gmail\n");
+    expect(r.rows[0]?.email).toBeNull();
+    expect(r.warnings).toHaveLength(1);
+    expect(r.issues).toHaveLength(0);
+  });
+  it("fichier Excel type : SW / HCA, heures, pays, lignes fantômes", () => {
+    const csv = "Code,full_name,Phone,email,country,POSTCODE,city,region,skills,availability,notes,weekly hours\n" +
+      "C1,AMANDA HUDSON,7867057833,a@x.com,England,M6 5JF,Salford,North West,SW / HCA,,,20hours\n" +
+      "C2,JOHN,07350 162 518,j@x.com,England,S40 2SR,Chesterfield,East Midlands,hca,,,Full Time\n" +
+      ",,,,,,,,=+I2,,,\n";
+    const r = parseStaffCsv(csv, { defaultCountry: "GB" });
+    expect(r.issues).toEqual([]);
+    expect(r.skippedEmpty).toBe(1);
+    expect(r.rows[0]).toMatchObject({ phone: "+447867057833", skills: ["support worker", "healthcare assistant"], weekly_hours: 20, country_code: "GB", availability_status: null, action: "create" });
+    expect(r.rows[1]).toMatchObject({ skills: ["healthcare assistant"], weekly_hours: 37.5 });
+  });
+  it("parseWeeklyHours et résolution des compétences", () => {
+    expect(parseWeeklyHours("20hours")).toBe(20);
+    expect(parseWeeklyHours("Full time")).toBe(37.5);
+    expect(parseWeeklyHours("12,5 h")).toBe(12.5);
+    expect(parseWeeklyHours("")).toBeNull();
+    expect(parseWeeklyHours("beaucoup")).toBe("invalid");
+    expect(parseSkills("SW / HCA")).toEqual(["support worker", "healthcare assistant"]);
+    expect(parseSkills("driver / own transport; RGN")).toEqual(["driver / own transport", "rgn"]);
   });
   it("ignore toute colonne owner_id du fichier", () => {
     const r = parseStaffCsv("full_name,owner_id,country_code,city\nA,00000000-0000-0000-0000-000000000000,GB,London\n");

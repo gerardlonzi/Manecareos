@@ -9,6 +9,7 @@ import { Badge, LocationBadge, MissionStatusBadge } from "@/components/ui/badge"
 import { LinkButton } from "@/components/ui/button";
 import { Alert, Card, CardBody, CardHeader, PageHeader } from "@/components/ui/card";
 import { EVENT_LABELS, EVENT_LABELS_EN } from "@/lib/activity";
+import { workplaceLabel } from "@/config/workplaces";
 import { skillLabel } from "@/config/skills";
 import { getT } from "@/lib/i18n-server";
 import { describeActivity } from "@/lib/messages";
@@ -18,6 +19,7 @@ import { mapboxPublicToken } from "@/lib/env";
 import type { ActivityLog, AssignmentStatus, AvailabilityStatus, MissionOverview } from "@/lib/types";
 import { formatDateTime } from "@/lib/utils";
 import { uuidSchema } from "@/lib/validation";
+import { utcIsoToZonedLocal } from "@/lib/time";
 
 export const metadata = { title: "Détail de la mission" };
 
@@ -40,7 +42,7 @@ export default async function MissionDetailPage({ params, searchParams }: { para
   const [{ data }, { data: assigns }, { data: logs }] = await Promise.all([
     supabase.from("mission_overview").select("*").eq("id", id).maybeSingle(),
     supabase.from("mission_staff")
-      .select("id, assignment_status, staff_id, selected_at, staff:staff_id(id, full_name, phone, availability_status, archived_at, photo_path)")
+      .select("id, assignment_status, staff_id, selected_at, shift_start_at, shift_end_at, hours_worked, pay_rate, completed_at, staff:staff_id(id, full_name, phone, availability_status, archived_at, photo_path)")
       .eq("mission_id", id).order("selected_at", { ascending: true }),
     supabase.from("activity_logs").select("*").eq("mission_id", id).order("created_at", { ascending: false }).limit(15),
   ]);
@@ -48,11 +50,11 @@ export default async function MissionDetailPage({ params, searchParams }: { para
   if (!m) notFound();
 
   type S = { id: string; full_name: string; phone: string | null; availability_status: AvailabilityStatus; archived_at: string | null; photo_path: string | null };
-  type A = { id: string; assignment_status: AssignmentStatus; staff_id: string; staff: S | S[] | null };
+  type A = { id: string; assignment_status: AssignmentStatus; staff_id: string; shift_start_at: string | null; shift_end_at: string | null; hours_worked: number | null; pay_rate: number | null; completed_at: string | null; staff: S | S[] | null };
   const photoMap = await signPhotoUrls(supabase, ((assigns ?? []) as unknown as A[]).flatMap((a) => { const s = Array.isArray(a.staff) ? a.staff[0] : a.staff; return s ? [{ id: s.id, photo_path: s.photo_path }] : []; }));
   const rows: AssignmentRow[] = ((assigns ?? []) as unknown as A[]).flatMap((a) => {
     const s = Array.isArray(a.staff) ? a.staff[0] : a.staff;
-    return s ? [{ photoUrl: photoMap[s.id], id: a.id, status: a.assignment_status, staffId: a.staff_id, name: s.full_name, phone: s.phone, availability: s.availability_status, archived: Boolean(s.archived_at) }] : [];
+    return s ? [{ photoUrl: photoMap[s.id], id: a.id, status: a.assignment_status, staffId: a.staff_id, name: s.full_name, phone: s.phone, availability: s.availability_status, archived: Boolean(s.archived_at), shiftStart: utcIsoToZonedLocal(a.shift_start_at, profile.timezone), shiftEnd: utcIsoToZonedLocal(a.shift_end_at, profile.timezone), hoursWorked: a.hours_worked, payRate: a.pay_rate ?? m.pay_rate, currency: m.pay_currency, plannedHours: m.planned_hours }] : [];
   });
 
   const closed = m.status === "cancelled" || m.status === "completed";
@@ -64,7 +66,7 @@ export default async function MissionDetailPage({ params, searchParams }: { para
       <Link href="/missions" className="mb-3 inline-flex items-center gap-1 text-sm text-muted hover:text-ink"><ArrowLeft className="h-4 w-4" aria-hidden /> {t("Retour aux missions", "Back to assignments")}</Link>
       <PageHeader
         title={<span className="flex flex-wrap items-center gap-3">{m.title}<MissionStatusBadge status={m.status} /></span>}
-        description={m.mission_reference ? `${t("Référence", "Reference")} : ${m.mission_reference}` : undefined}
+        description={[workplaceLabel(m.workplace_type, m.workplace_name, locale), m.mission_reference ? `${t("Référence", "Reference")} : ${m.mission_reference}` : null].filter(Boolean).join(" · ") || undefined}
         actions={
           <>
             {!closed ? <LinkButton href={`/missions/${m.id}/staff`}><Search className="h-4 w-4" aria-hidden /> {t("Trouver du staff", "Find staff")}</LinkButton> : null}
@@ -116,6 +118,7 @@ export default async function MissionDetailPage({ params, searchParams }: { para
                 <Row label="Description"><span className="whitespace-pre-wrap">{m.description ?? "—"}</span></Row>
                 <Row label={t("Début", "Start")}>{m.scheduled_start_at ? formatDateTime(m.scheduled_start_at, tz) : "—"}</Row>
                 <Row label={t("Fin", "End")}>{m.scheduled_end_at ? formatDateTime(m.scheduled_end_at, tz) : "—"}</Row>
+                <Row label={t("Lieu de travail", "Place of work")}>{workplaceLabel(m.workplace_type, m.workplace_name, locale) ?? "—"}</Row>
                 <Row label={t("Compétences requises", "Required skills")}>{m.required_skills.length ? <span className="flex flex-wrap gap-1">{m.required_skills.map((k) => <Badge key={k} tone="blue">{skillLabel(k, locale)}</Badge>)}</span> : "—"}</Row>
                 <Row label={t("Transport préféré", "Preferred transport")}>{({ driving: t("Voiture", "Car"), walking: t("Marche", "Walking"), cycling: t("Vélo", "Bicycle"), public_transport: t("Transports en commun", "Public transport") } as const)[m.transport_mode]}</Row>
                 <Row label="Notes"><span className="whitespace-pre-wrap">{m.notes ?? "—"}</span></Row>

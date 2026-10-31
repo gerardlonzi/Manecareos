@@ -6,6 +6,7 @@ import { APP_CONFIG } from "@/config/app";
 import { isSupabaseConfigured } from "@/lib/env";
 import { createClient } from "@/lib/supabase/server";
 import type { Profile } from "@/lib/types";
+import { hasValidTwoFactor } from "@/lib/security/twofactor";
 
 export type Session = { supabase: SupabaseClient; user: User; profile: Profile };
 
@@ -25,7 +26,16 @@ function fallbackProfile(user: User): Profile {
   };
 }
 
-/** Session de l'utilisateur courant, ou null. Utilise getUser() : le jeton est vérifié auprès de Supabase Auth. */
+/** Identité vérifiée (mot de passe) SANS contrôle du deuxième facteur : uniquement pour la page de saisie du code. */
+export const getAuthUser = cache(async (): Promise<{ id: string; email: string | null } | null> => {
+  if (!isSupabaseConfigured()) return null;
+  const supabase = await createClient();
+  const { data } = await supabase.auth.getClaims();
+  const c = data?.claims;
+  return c?.sub ? { id: c.sub, email: typeof c.email === "string" ? c.email : null } : null;
+});
+
+/** Session complète de l'utilisateur courant (mot de passe ET code e-mail validés), ou null. */
 export const getSession = cache(async (): Promise<Session | null> => {
   if (!isSupabaseConfigured()) return null;
   const supabase = await createClient();
@@ -33,6 +43,8 @@ export const getSession = cache(async (): Promise<Session | null> => {
   const { data: claimsData, error } = await supabase.auth.getClaims();
   const claims = claimsData?.claims;
   if (error || !claims?.sub) return null;
+  // Défense en profondeur : même si le proxy était contourné, aucune donnée sans deuxième facteur valide.
+  if (!(await hasValidTwoFactor(claims.sub))) return null;
   const user = {
     id: claims.sub,
     email: typeof claims.email === "string" ? claims.email : undefined,
@@ -49,6 +61,9 @@ export const getSession = cache(async (): Promise<Session | null> => {
 export async function requireSession(): Promise<Session> {
   if (!isSupabaseConfigured()) redirect("/login?error=config");
   const s = await getSession();
-  if (!s) redirect("/login");
+  if (!s) {
+    const au = await getAuthUser();
+    redirect(au ? "/auth/verify" : "/login");
+  }
   return s;
 }

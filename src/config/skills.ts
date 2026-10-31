@@ -4,20 +4,20 @@
  * (on peut taper « aide-soignant » ou « carer » : les deux sont trouvés).
  */
 export type SkillGroup = "care" | "nursing" | "home" | "kitchen" | "activities" | "admin" | "training";
-export type Skill = { id: string; fr: string; en: string; group: SkillGroup };
+export type Skill = { id: string; fr: string; en: string; group: SkillGroup; abbr?: string[] };
 
-const S = (id: string, fr: string, en: string, group: SkillGroup): Skill => ({ id, fr, en, group });
+const S = (id: string, fr: string, en: string, group: SkillGroup, abbr?: string[]): Skill => ({ id, fr, en, group, abbr });
 
 export const SKILL_CATALOG: Skill[] = [
   // Soins & accompagnement
   S("carer", "Aide-soignant(e) / Carer", "Carer", "care"),
   S("care", "Soins et accompagnement", "Care", "care"),
-  S("support worker", "Accompagnant(e) (Support Worker)", "Support worker", "care"),
-  S("care assistant", "Aide-soignant(e)", "Care assistant", "care"),
-  S("senior care assistant", "Aide-soignant(e) principal(e)", "Senior care assistant", "care"),
-  S("healthcare assistant", "Assistant(e) de santé", "Healthcare assistant", "care"),
-  S("clinical support worker", "Assistant(e) clinique", "Clinical support worker", "care"),
-  S("healthcare support worker", "Agent de soutien en santé", "Healthcare support worker", "care"),
+  S("support worker", "Accompagnant(e) (Support Worker, SW)", "Support worker (SW)", "care", ["sw"]),
+  S("care assistant", "Aide-soignant(e) (CA)", "Care assistant (CA)", "care", ["ca"]),
+  S("senior care assistant", "Aide-soignant(e) principal(e) (SCA)", "Senior care assistant (SCA)", "care", ["sca"]),
+  S("healthcare assistant", "Assistant(e) de santé (HCA)", "Healthcare assistant (HCA)", "care", ["hca", "health care assistant"]),
+  S("clinical support worker", "Assistant(e) clinique (CSW)", "Clinical support worker (CSW)", "care", ["csw"]),
+  S("healthcare support worker", "Agent de soutien en santé (HCSW)", "Healthcare support worker (HCSW)", "care", ["hcsw"]),
   S("personal care", "Soins personnels", "Personal care", "care"),
   S("elderly care", "Soins aux personnes âgées", "Elderly care", "care"),
   S("dementia care", "Soins liés à la démence", "Dementia care", "care"),
@@ -35,11 +35,11 @@ export const SKILL_CATALOG: Skill[] = [
   S("companionship", "Compagnie et soutien moral", "Companionship", "care"),
   // Soins infirmiers
   S("nurse", "Infirmier(ère)", "Nurse", "nursing"),
-  S("rgn", "Infirmier(ère) diplômé(e) d’État (RGN)", "Registered General Nurse (RGN)", "nursing"),
+  S("rgn", "Infirmier(ère) diplômé(e) d’État (RGN)", "Registered General Nurse (RGN)", "nursing", ["rgn"]),
   S("registered nurse", "Infirmier(ère) diplômé(e)", "Registered nurse", "nursing"),
   S("staff nurse", "Infirmier(ère) de service", "Staff nurse", "nursing"),
   S("nurse practitioner", "Infirmier(ère) praticien(ne)", "Nurse practitioner", "nursing"),
-  S("mental health nursing", "Soins infirmiers en santé mentale", "Mental health nursing", "nursing"),
+  S("mental health nursing", "Soins infirmiers en santé mentale (RMN)", "Mental health nursing (RMN)", "nursing", ["rmn"]),
   S("community nursing", "Soins infirmiers communautaires", "Community nursing", "nursing"),
   S("midwife", "Sage-femme", "Midwife", "nursing"),
   S("medication administration", "Administration des médicaments", "Medication administration", "nursing"),
@@ -77,7 +77,7 @@ export const SKILL_CATALOG: Skill[] = [
   S("receptionist", "Réceptionniste", "Receptionist", "admin"),
   S("care coordination", "Coordination des soins", "Care coordination", "admin"),
   S("healthcare administration", "Administration de santé", "Healthcare administration", "admin"),
-  S("team leader", "Chef d’équipe", "Team leader", "admin"),
+  S("team leader", "Chef d’équipe", "Team leader", "admin", ["tl"]),
   S("deputy manager", "Directeur(trice) adjoint(e)", "Deputy manager", "admin"),
   S("registered manager", "Directeur(trice) d’établissement (Registered Manager)", "Registered manager", "admin"),
   // Formations & certificats
@@ -114,3 +114,25 @@ export function skillLabel(id: string, locale: "fr" | "en"): string {
   if (s) return s[locale];
   return id.replace(/\b\w/g, (c) => c.toUpperCase());
 }
+
+
+/** Abréviations et libellés → identifiant canonique (SW → support worker, HCA → healthcare assistant…). */
+const TOKEN_INDEX: Map<string, string> = (() => {
+  const m = new Map<string, string>();
+  for (const sk of SKILL_CATALOG) {
+    m.set(sk.id, sk.id);
+    m.set(sk.en.toLowerCase(), sk.id);
+    m.set(sk.fr.toLowerCase(), sk.id);
+    for (const a of sk.abbr ?? []) m.set(a.toLowerCase(), sk.id);
+  }
+  return m;
+})();
+
+/** Identifiant canonique d'une saisie libre (« SW », « Health Care Assistant »…), ou null si inconnue. */
+export function resolveSkillToken(raw: string): string | null {
+  const k = raw.trim().toLowerCase().replace(/\s+/g, " ");
+  return TOKEN_INDEX.get(k) ?? null;
+}
+
+/** Texte de recherche d'une compétence : noms FR/EN + abréviations. */
+export const skillSearchText = (s: Skill) => `${s.fr} ${s.en} ${(s.abbr ?? []).join(" ")}`;

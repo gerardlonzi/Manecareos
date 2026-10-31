@@ -8,10 +8,12 @@ import { T } from "@/components/providers/t";
 import { Alert, EmptyState, PageHeader } from "@/components/ui/card";
 import { Pagination } from "@/components/ui/pagination";
 import { requireSession } from "@/lib/auth";
+import { complianceFor, currentWeekHours } from "@/lib/compliance";
 import { signPhotoUrls } from "@/lib/photos";
 import { applyStaffFilters, parseStaffFilters, staffFiltersToParams } from "@/lib/staff-query";
 import type { Staff } from "@/lib/types";
 import { toQuery } from "@/lib/utils";
+import { DismissibleAlert } from "@/components/ui/dismissible-alert";
 
 export const metadata = { title: "Staff" };
 
@@ -25,7 +27,9 @@ export default async function StaffDirectoryPage({ searchParams }: { searchParam
     supabase.from("staff").select("id", { count: "exact", head: true }).is("archived_at", null).eq("location_status", "pending"),
   ]);
   const rows = (data ?? []) as Staff[];
-  const photos = await signPhotoUrls(supabase, rows);
+  const [photos, comp, weekMap] = await Promise.all([signPhotoUrls(supabase, rows), complianceFor(supabase, rows.map((r) => r.id)), currentWeekHours(supabase)]);
+  const compliance = Object.fromEntries(comp.byStaff);
+  const weekHours = Object.fromEntries([...weekMap].map(([k, v]) => [k, v.total]));
   const total = count ?? 0;
   const hasFilters = Boolean(filters.q || filters.city || filters.region || filters.skill || filters.country || filters.availability !== "all" || filters.location !== "all" || filters.archived !== "active");
 
@@ -42,11 +46,11 @@ export default async function StaffDirectoryPage({ searchParams }: { searchParam
         toolbar={<StaffToolbar filters={filters} />}
       />
       <div className="space-y-4">
-        {(unresolved ?? 0) > 0 ? (
-          <Alert tone="warning" title={<T fr={`${unresolved} localisation(s) en attente de vérification`} en={`${unresolved} location(s) awaiting verification`} />}>
+      {(unresolved ?? 0) > 0 ? (
+          <DismissibleAlert id="staff-unresolved-locations" version={unresolved ?? 0} tone="warning" title={<T fr={`${unresolved} localisation(s) en attente de vérification`} en={`${unresolved} location(s) awaiting verification`} />}>
             <p><T fr="Ces personnes n’apparaissent pas dans les recherches par distance tant que leur lieu n’est pas résolu." en="These people will not appear in distance searches until their location is resolved." /></p>
             <div className="mt-2"><ResolveLocationsButton count={unresolved ?? 0} /></div>
-          </Alert>
+          </DismissibleAlert>
         ) : null}
         {error ? <Alert tone="danger" title={<T fr="Lecture impossible" en="Unable to load" />}><T fr="La liste n’a pas pu être chargée. Réessayez dans un instant." en="The list could not be loaded. Please try again shortly." /></Alert> : null}
         {!error && rows.length === 0 ? (
@@ -59,7 +63,7 @@ export default async function StaffDirectoryPage({ searchParams }: { searchParam
         ) : null}
         {rows.length > 0 ? (
           <>
-            <StaffTable rows={rows} photos={photos} />
+            <StaffTable rows={rows} photos={photos} compliance={compliance} weekHours={weekHours} />
             <Pagination page={filters.page} pageSize={filters.pageSize} total={total} basePath="/staff" params={staffFiltersToParams(filters, { page: "" })} />
           </>
         ) : null}

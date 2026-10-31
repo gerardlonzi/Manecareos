@@ -149,7 +149,7 @@ export function FindStaffClient({
         className={
           countryMapExpanded
             ? "fixed inset-0 z-[100] h-dvh bg-bg p-2 sm:p-4"
-            : "min-w-0 xl:sticky xl:top-4 xl:self-start"
+            : "min-w-0 xl:sticky xl:top-[var(--table-top)] xl:mt-3 xl:self-start"
         }
         aria-label={t("Carte de recherche", "Search map")}
       >
@@ -170,8 +170,8 @@ export function FindStaffClient({
               onMarkerClick={mapState.onMarkerClick}
               routeCoordinates={mapState.routeCoordinates}
               approxLine={mapState.approxLine}
-              className={countryMapExpanded ? "h-[calc(100dvh-2rem)]" : "h-[55vh] min-h-[340px] xl:h-[calc(100dvh-2rem)]"} 
-                           expanded={countryMapExpanded}
+              className={countryMapExpanded ? "h-[calc(100dvh-2rem)]" : "h-[55vh] min-h-[340px] xl:h-[calc(100dvh-2rem)]"}
+              expanded={countryMapExpanded}
               onToggleExpand={() => setCountryMapExpanded((current) => !current)}
             />
           ) : (
@@ -201,7 +201,7 @@ export function FindStaffClient({
         className="min-w-0 space-y-3"
         aria-label={t("Recherche et résultats", "Search and results")}
       >
-        <div className="sticky top-0 z-30 rounded-2xl border border-line bg-surface/95 p-3 shadow-sm backdrop-blur-xl">
+        <div className="sticky top-[calc(var(--table-top)+0.5rem)] z-20 rounded-2xl border border-line bg-surface p-3 shadow-sm">
           <div className="flex min-w-0 items-center gap-2">
             <button
               type="button"

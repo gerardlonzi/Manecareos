@@ -13,7 +13,7 @@ import { normalizeSkills } from "@/lib/utils";
 import { isUniqueViolation, withSession } from "./helpers";
 
 export type ImportRowFailure = { rowNumber: number; field: string; message: string };
-export type ImportBatchResult = { inserted: number; failures: ImportRowFailure[]; located: number; locationPending: number };
+export type ImportBatchResult = { inserted: number; updated: number; failures: ImportRowFailure[]; located: number; locationPending: number };
 
 /** Codes staff et e-mails déjà présents, pour détecter les doublons à l'aperçu (données du manager uniquement, via RLS). */
 export async function getExistingIdentifiers(): Promise<ActionResult<{ codes: string[]; emails: string[] }>> {
@@ -46,9 +46,10 @@ const rowSchema = z.object({
   city: z.string().max(120).nullable(),
   region: z.string().max(120).nullable(),
   skills: z.array(z.string().max(60)).max(30),
-  availability_status: z.enum(["available", "unavailable", "unknown"]),
+  availability_status: z.enum(["available", "unavailable", "unknown"]).nullable(),
   notes: z.string().max(4000).nullable(),
   weekly_hours: z.number().min(0).max(168).nullable().optional(),
+  action: z.enum(["create", "update"]).optional(),
 });
 
 export async function importStaffBatch(raw: unknown): Promise<ActionResult<ImportBatchResult>> {
@@ -82,26 +83,52 @@ export async function importStaffBatch(raw: unknown): Promise<ActionResult<Impor
     // Une seule résolution par adresse distincte du lot (concurrence bornée), puis calcul par ligne depuis le cache mémoire.
     await resolveMany(valid.filter((v) => v.row.postal_code || v.row.city).map((v) => ({ countryCode: v.country, postalCode: v.row.postal_code, city: v.row.city, region: v.row.region })));
 
+    // Fiches existantes (même code, sinon même e-mail) : elles sont MISES À JOUR au lieu d'être rejetées comme doublons.
+    const codes = [...new Set(valid.map((v) => v.row.staff_code).filter((c): c is string => Boolean(c)))];
+    const emails = [...new Set(valid.map((v) => v.email).filter((c): c is string => Boolean(c)))];
+    const byCode = new Map<string, string>(), byEmail = new Map<string, string>();
+    if (codes.length) { const { data } = await supabase.from("staff").select("id, staff_code").in("staff_code", codes); for (const r of (data ?? []) as { id: string; staff_code: string }[]) byCode.set(r.staff_code.toLowerCase(), r.id); }
+    if (emails.length) { const { data } = await supabase.from("staff").select("id, email").in("email", emails); for (const r of (data ?? []) as { id: string; email: string }[]) byEmail.set(r.email.toLowerCase(), r.id); }
+
     let located = 0;
     let locationPending = 0;
     const toInsert: { rowNumber: number; record: Record<string, unknown> }[] = [];
+    const toUpdate: { rowNumber: number; id: string; record: Record<string, unknown> }[] = [];
     await mapWithConcurrency(valid, APP_CONFIG.geocoding.concurrency, async (v) => {
-      const loc = await computeLocation({ country_code: v.country, postal_code: v.row.postal_code, city: v.row.city, region: v.row.region });
-      if (!loc.ok) { failures.push({ rowNumber: v.rowNumber, field: loc.field, message: loc.message }); return; }
-      if (loc.fields.location_status === "resolved") located++; else if (v.row.postal_code || v.row.city) locationPending++;
+      const existingId = (v.row.staff_code ? byCode.get(v.row.staff_code.toLowerCase()) : undefined) ?? (v.email ? byEmail.get(v.email) : undefined);
+      const hasPlace = Boolean(v.row.postal_code || v.row.city);
+      const loc = existingId && !hasPlace ? null : await computeLocation({ country_code: v.country, postal_code: v.row.postal_code, city: v.row.city, region: v.row.region });
+      if (loc && !loc.ok) { failures.push({ rowNumber: v.rowNumber, field: loc.field, message: loc.message }); return; }
+      if (loc) { if (loc.fields.location_status === "resolved") located++; else if (hasPlace) locationPending++; }
+
+      if (existingId) {
+        // Mise à jour : seules les colonnes renseignées dans le fichier écrasent la fiche (une cellule vide ne efface rien).
+        const rec: Record<string, unknown> = { full_name: v.row.full_name };
+        if (v.row.staff_code) rec.staff_code = v.row.staff_code;
+        if (v.phone) rec.phone = v.phone;
+        if (v.email) rec.email = v.email;
+        const skills = normalizeSkills(v.row.skills);
+        if (skills.length) rec.skills = skills;
+        if (v.row.availability_status) rec.availability_status = v.row.availability_status;
+        if (v.row.notes) rec.notes = v.row.notes;
+        if (v.row.weekly_hours != null) rec.weekly_hours = v.row.weekly_hours;
+        if (loc?.ok) Object.assign(rec, loc.fields);
+        toUpdate.push({ rowNumber: v.rowNumber, id: existingId, record: rec });
+        return;
+      }
       toInsert.push({
         rowNumber: v.rowNumber,
         record: {
           owner_id: user.id,
           staff_code: v.row.staff_code || null, full_name: v.row.full_name, phone: v.phone, email: v.email,
-          skills: normalizeSkills(v.row.skills), availability_status: v.row.availability_status, notes: v.row.notes || null, weekly_hours: v.row.weekly_hours ?? null,
-          ...loc.fields,
+          skills: normalizeSkills(v.row.skills), availability_status: v.row.availability_status ?? "unknown", notes: v.row.notes || null, weekly_hours: v.row.weekly_hours ?? null,
+          ...(loc?.ok ? loc.fields : {}),
         },
       });
     });
     toInsert.sort((a, b) => a.rowNumber - b.rowNumber);
 
-    let inserted = 0;
+    let inserted = 0, updated = 0;
     if (toInsert.length > 0) {
       const { error } = await supabase.from("staff").insert(toInsert.map((t) => t.record));
       if (!error) inserted = toInsert.length;
@@ -110,11 +137,16 @@ export async function importStaffBatch(raw: unknown): Promise<ActionResult<Impor
         for (const t of toInsert) {
           const { error: e } = await supabase.from("staff").insert(t.record);
           if (!e) inserted++;
-          else failures.push({ rowNumber: t.rowNumber, field: isUniqueViolation(e) ? "staff_code" : "ligne", message: isUniqueViolation(e) ? "Ce code staff existe déjà" : "Insertion refusée par la base" });
+          else failures.push({ rowNumber: t.rowNumber, field: isUniqueViolation(e) ? "staff_code" : "ligne", message: isUniqueViolation(e) ? "Ce code ou cet e-mail existe déjà" : "Insertion refusée par la base" });
         }
       }
     }
-    return { ok: true, data: { inserted, failures: failures.sort((a, b) => a.rowNumber - b.rowNumber), located, locationPending } };
+    for (const t of toUpdate) {
+      const { error: e } = await supabase.from("staff").update(t.record).eq("id", t.id);
+      if (!e) updated++;
+      else failures.push({ rowNumber: t.rowNumber, field: isUniqueViolation(e) ? "email" : "ligne", message: isUniqueViolation(e) ? "Code ou e-mail déjà utilisé par une autre fiche" : "Mise à jour refusée par la base" });
+    }
+    return { ok: true, data: { inserted, updated, failures: failures.sort((a, b) => a.rowNumber - b.rowNumber), located, locationPending } };
   });
 }
 
@@ -122,6 +154,7 @@ const summarySchema = z.object({
   fileName: z.string().max(200).optional(),
   totalRows: z.number().int().min(0).max(100000),
   inserted: z.number().int().min(0),
+  updated: z.number().int().min(0).default(0),
   rejected: z.number().int().min(0),
   located: z.number().int().min(0),
   locationPending: z.number().int().min(0),
@@ -134,12 +167,12 @@ export async function finalizeImport(raw: unknown): Promise<ActionResult> {
     const s = p.data;
     await logActivity(supabase, user.id, {
       event_type: "import_completed",
-      description: `Import CSV terminé : ${s.inserted} importé(s), ${s.rejected} rejeté(s) sur ${s.totalRows}`,
-      metadata: { total: s.totalRows, inserted: s.inserted, rejected: s.rejected, located: s.located, location_pending: s.locationPending },
+      description: `Import terminé : ${s.inserted} créé(s), ${s.updated} mis à jour, ${s.rejected} rejeté(s) sur ${s.totalRows}`,
+      metadata: { total: s.totalRows, inserted: s.inserted, updated: s.updated, rejected: s.rejected, located: s.located, location_pending: s.locationPending },
     });
     await notify(supabase, user.id, {
       type: "import_completed", title: "Import terminé",
-      message: `${s.inserted} staff importé(s) sur ${s.totalRows} ligne(s). ${s.located} localisation(s) vérifiée(s).`, link: "/staff",
+      message: `${s.inserted} créé(s), ${s.updated} mis à jour sur ${s.totalRows} ligne(s). ${s.located} localisation(s) vérifiée(s).`, link: "/staff",
     });
     if (s.rejected > 0) {
       await notify(supabase, user.id, { type: "import_errors", title: "Lignes rejetées à l'import", message: `${s.rejected} ligne(s) n'ont pas été importées. Téléchargez le rapport d'erreurs depuis la page d'import.`, link: "/staff/import" });

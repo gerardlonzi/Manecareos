@@ -1,3 +1,4 @@
+import type { Compliance } from "@/lib/documents";
 import type { RouteEstimate } from "@/lib/routing/types";
 import type { AssignmentStatus, AvailabilityStatus, LocationStatus, MissionStatus, TransportMode } from "@/lib/types";
 
@@ -34,6 +35,10 @@ export type CandidateDTO = {
   /** URL signée (1 h) de la photo, ou null : l'interface retombe alors sur les initiales. */
   photoUrl: string | null;
   weeklyHours: number | null;
+  /** Heures déjà réservées/travaillées cette semaine (pour le plafond hebdomadaire). */
+  weekUsed: number;
+  /** Dossier de documents obligatoires (manquants / expirés / bientôt expirés). */
+  compliance: Compliance | null;
   assignment: { id: string; status: AssignmentStatus } | null;
 };
 

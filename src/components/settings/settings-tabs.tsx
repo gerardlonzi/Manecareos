@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 const TABS = [
   { href: "/settings", fr: "Général", en: "General" },
   { href: "/settings/profile", fr: "Profil", en: "Profile" },
+  { href: "/settings/documents", fr: "Documents", en: "Documents" },
   { href: "/settings/location", fr: "Recherche et trajets", en: "Search & travel" },
   { href: "/settings/security", fr: "Sécurité", en: "Security" },
 ];

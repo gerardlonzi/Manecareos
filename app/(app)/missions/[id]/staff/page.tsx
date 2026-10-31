@@ -50,7 +50,7 @@ export default async function MissionStaffPage({ params }: { params: Promise<{ i
           mapToken={mapboxPublicToken()}
           unit={profile.distance_unit}
           timeZone={profile.timezone}
-          defaults={{ radiusKm: profile.default_search_radius_km, availability: profile.default_availability_filter, mode: m.transport_mode }}
+          defaults={{ radiusKm: profile.default_search_radius_km, availability: "all", mode: m.transport_mode }}
           mission={{ id: m.id, title: m.title, status: m.status, requiredStaffCount: m.required_staff_count, selectedCount: m.selected_count }}
         />
       )}
