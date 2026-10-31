@@ -19,7 +19,7 @@ const schema = z
   .object({
     full_name: z.string().trim().min(2, "Nom trop court"),
     email: z.email("Adresse e-mail invalide"),
-    password: z.string().min(8, "8 caractères minimum").regex(/[A-Za-z]/, "Ajoutez une lettre").regex(/\d/, "Ajoutez un chiffre"),
+    password: z.string().min(10, "10 caractères minimum").regex(/[A-Za-z]/, "Ajoutez une lettre").regex(/\d/, "Ajoutez un chiffre"),
     confirm: z.string(),
     company_name: z.string().optional(),
     country_code: z.string().min(2, "Choisissez un pays"),
@@ -29,7 +29,7 @@ type Values = z.infer<typeof schema>;
 
 export function SignupForm({ defaultCountry }: { defaultCountry: string }) {
   const router = useRouter();
-  const { t, locale } = usePreferences();
+  const { t, tm, locale } = usePreferences();
   const [pending, start] = React.useTransition();
   const [formError, setFormError] = React.useState<string | null>(null);
   const { register, handleSubmit, setError, setValue, watch, formState: { errors } } = useForm<Values>({ resolver: zodResolver(schema), defaultValues: { country_code: defaultCountry } });
@@ -53,25 +53,25 @@ export function SignupForm({ defaultCountry }: { defaultCountry: string }) {
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
       {formError ? <Alert tone="danger">{formError}</Alert> : null}
-      <Field id="full_name" label={t("Nom complet", "Full name")} error={errors.full_name?.message} required>
+      <Field id="full_name" label={t("Nom complet", "Full name")} error={errors.full_name?.message ? tm(errors.full_name.message) : undefined} required>
         <Input id="full_name" autoComplete="name" aria-invalid={!!errors.full_name} {...register("full_name")} />
       </Field>
-      <Field id="email" label={t("Adresse e-mail", "Email address")} error={errors.email?.message} required>
+      <Field id="email" label={t("Adresse e-mail", "Email address")} error={errors.email?.message ? tm(errors.email.message) : undefined} required>
         <Input id="email" type="email" autoComplete="email" aria-invalid={!!errors.email} {...register("email")} />
       </Field>
       <div className="grid gap-4 sm:grid-cols-2">
         <Field id="company_name" label={t("Entreprise (facultatif)", "Company (optional)")}>
           <Input id="company_name" autoComplete="organization" {...register("company_name")} />
         </Field>
-        <Field id="country_code" label={t("Pays d’activité", "Country of operation")} error={errors.country_code?.message} required>
+        <Field id="country_code" label={t("Pays d’activité", "Country of operation")} error={errors.country_code?.message ? tm(errors.country_code.message) : undefined} required>
           <input type="hidden" {...register("country_code")} />
           <SearchablePicker id="country_code" value={countryValue} options={COUNTRY_LIST.map((c) => ({ value: c.code, label: countryName(c.code, locale), description: `+${c.dialCode}` }))} onValueChange={(value) => setValue("country_code", value, { shouldDirty: true, shouldValidate: true })} searchPlaceholder={t("Rechercher un pays…", "Search country…")} />
         </Field>
       </div>
-      <Field id="password" label={t("Mot de passe", "Password")} error={errors.password?.message} hint={t("8 caractères minimum, avec lettres et chiffres.", "At least 8 characters, including letters and numbers.")} required>
+      <Field id="password" label={t("Mot de passe", "Password")} error={errors.password?.message ? tm(errors.password.message) : undefined} hint={t("10 caractères minimum, avec lettres et chiffres.", "At least 10 characters, including letters and numbers.")} required>
         <PasswordInput id="password" autoComplete="new-password" aria-invalid={!!errors.password} {...register("password")} />
       </Field>
-      <Field id="confirm" label={t("Confirmer le mot de passe", "Confirm password")} error={errors.confirm?.message} required>
+      <Field id="confirm" label={t("Confirmer le mot de passe", "Confirm password")} error={errors.confirm?.message ? tm(errors.confirm.message) : undefined} required>
         <PasswordInput id="confirm" autoComplete="new-password" aria-invalid={!!errors.confirm} {...register("confirm")} />
       </Field>
       <Button type="submit" className="w-full" pending={pending}>{t("Créer mon compte", "Create account")}</Button>

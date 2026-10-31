@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { WORKPLACE_VALUES } from "@/config/workplaces";
 import { normalizeSkills } from "@/lib/utils";
 
 const optText = (max: number) =>
@@ -62,6 +63,11 @@ export const missionInputSchema = z.object({
   required_staff_count: z.coerce.number({ error: "Nombre invalide" }).int("Nombre entier requis").min(1, "Au moins 1").max(1000, "1000 maximum"),
   scheduled_start_local: optText(16),
   scheduled_end_local: optText(16),
+  planned_hours: optText(8),
+  workplace_type: z.enum(WORKPLACE_VALUES).optional().nullable().or(z.literal("")).transform((v) => (v ? v : null)),
+  workplace_name: optText(120),
+  pay_rate: optText(10),
+  pay_currency: z.enum(["GBP", "EUR", "USD"]).default("GBP"),
   transport_mode: z.enum(["driving", "walking", "cycling", "public_transport"]).default("driving"),
   notes: optText(4000),
   intent: z.enum(["draft", "open"]).default("open"),

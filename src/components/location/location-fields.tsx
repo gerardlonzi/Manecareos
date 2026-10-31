@@ -63,7 +63,6 @@ export function LocationFields({ savedStatus, verifiedAt, timeZone, noun = "la l
 
   return (
     <fieldset className="space-y-4">
-      <legend className="mb-1 flex items-center gap-2 text-sm font-semibold"><MapPin className="h-4 w-4 text-primary" aria-hidden /> {t("Localisation enregistrée", "Saved location")}</legend>
       <div className="space-y-4">
         <Field id="country_code" label={t("Pays / nation", "Country / nation")} error={errors.country_code?.message} required>
           <input type="hidden" {...register("country_code")} />

@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "flag-icons/css/flag-icons.min.css";
 
 /* ───────────────────────── Manecare design tokens ─────────────────────────
    Couleurs tirées du logo Maneliza Care : bleu ciel (#039DF5) et rouge profond (#9F1013).
@@ -26,6 +27,15 @@
   --shadow-pop: 0 18px 50px -12px rgb(15 27 42 / 0.28);
   --radius-card: 14px;
 }
+
+/* Hauteur de l’en-tête de l’application (les en-têtes de page collants se placent dessous). */
+:root { --app-header-h: 3.5rem; --page-px: 1rem; --page-max: 100000px; --table-top: calc(var(--app-header-h) + var(--sticky-h, 0px)); }
+@media (min-width: 640px) { :root { --page-px: 1.5rem; } }
+@media (min-width: 1024px) { :root { --page-px: 2rem; } }
+
+/* Le bandeau de titre (data-fullbleed) occupe toute la largeur, comme l'en-tête ; le contenu suit les mêmes marges que l’en-tête (pleine largeur). */
+.page-main > :not([data-fullbleed]) { margin-inline: max(var(--page-px), calc((100% - var(--page-max)) / 2)); }
+.page-main > [data-fullbleed] { padding-inline: max(var(--page-px), calc((100% - var(--page-max)) / 2)); }
 
 html {
   color-scheme: light;
@@ -123,7 +133,7 @@ button:not(:disabled):active { transform: translateY(1px) scale(.99); }
 .card-surface { background: var(--color-surface); border: 1px solid var(--color-line); border-radius: var(--radius-card); box-shadow: var(--shadow-card); }
 .lift { transition: transform .22s ease, box-shadow .22s ease, border-color .22s ease; }
 .lift:hover { transform: translateY(-3px); box-shadow: var(--shadow-pop); border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-line)); }
-.glass { background: color-mix(in srgb, var(--color-surface) 82%, transparent); backdrop-filter: blur(14px) saturate(1.2); }
+.glass { background: var(--color-surface); }
 
 /* Tableaux : en-tête collant sous l'en-tête de page */
 .data-table thead th { position: sticky; top: var(--table-top, 0px); z-index: 5; background: var(--color-surface-2); box-shadow: 0 1px 0 var(--color-line); }

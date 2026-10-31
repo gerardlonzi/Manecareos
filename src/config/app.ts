@@ -3,6 +3,8 @@
  * Rien ici ne dépend d'un pays en particulier : le pays de lancement vient de l'environnement.
  */
 export const APP_CONFIG = {
+  /** Repère de version : affiché dans le menu du profil pour vérifier que la bonne copie du projet tourne. */
+  version: "2026.10.31",
   name: "Manecare",
   company: "Maneliza Care",
   tagline: "Trouvez le bon personnel, près de la mission, en quelques secondes.",

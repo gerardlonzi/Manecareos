@@ -80,7 +80,7 @@ export default async function MissionsPage({ searchParams }: { searchParams: Pro
               </tbody>
             </table>
           </div>
-          <Pagination page={f.page} pageSize={f.pageSize} total={total} basePath="/missions" params={missionFiltersToParams(f, { page: "" })}/>
+          <Pagination page={f.page} pageSize={f.pageSize} total={total} basePath="/missions" params={missionFiltersToParams(f, { page: "" })} />
         </>
       ) : null}
     </>

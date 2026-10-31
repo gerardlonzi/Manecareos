@@ -28,7 +28,7 @@ function timeZones(current: string): string[] {
 
 export function ProfileForm({ profile }: { profile: Profile }) {
   const router = useRouter();
-  const { t, locale } = usePreferences();
+  const { t, tm, locale } = usePreferences();
   const [pending, start] = React.useTransition();
   const [v, setV] = React.useState({ full_name: profile.full_name, company_name: profile.company_name ?? "", country_code: profile.country_code, timezone: profile.timezone });
   const [saved, setSaved] = React.useState(v);
@@ -47,8 +47,8 @@ export function ProfileForm({ profile }: { profile: Profile }) {
           setErrors({});
           start(async () => {
             const r = await updateProfile(v);
-            if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(friendlyError(r.error)); return; }
-            setSaved(v); toast.success(r.message ?? "Enregistré"); router.refresh();
+            if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(tm(friendlyError(r.error))); return; }
+            setSaved(v); toast.success(tm(r.message ?? "Enregistré")); router.refresh();
           });
         }}>
           <Field id="full_name" label={t("Nom complet", "Full name")} error={errors.full_name} required><Input id="full_name" value={v.full_name} onChange={set("full_name")} /></Field>
@@ -71,7 +71,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
 
 export function LocationPrefsForm({ profile, supportedModes, defaultCountry }: { profile: Profile; supportedModes: TransportMode[]; defaultCountry: string }) {
   const router = useRouter();
-  const { t, locale } = usePreferences();
+  const { t, tm, locale } = usePreferences();
   const [pending, start] = React.useTransition();
   const [resetting, startReset] = React.useTransition();
   const [clearing, startClear] = React.useTransition();
@@ -94,8 +94,8 @@ export function LocationPrefsForm({ profile, supportedModes, defaultCountry }: {
             setErrors({});
             start(async () => {
               const r = await updateLocationPrefs({ ...v, default_search_radius_km: Number(v.default_search_radius_km) });
-              if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(friendlyError(r.error)); return; }
-              setSaved(v); toast.success(r.message ?? "Enregistré"); router.refresh();
+              if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(tm(friendlyError(r.error))); return; }
+              setSaved(v); toast.success(tm(r.message ?? "Enregistré")); router.refresh();
             });
           }}>
             <Field id="p_country" label={t("Pays par défaut", "Default country")} error={errors.country_code}>
@@ -125,21 +125,21 @@ export function LocationPrefsForm({ profile, supportedModes, defaultCountry }: {
             <div className="flex flex-wrap justify-end gap-2 sm:col-span-2">
               <Button variant="ghost" pending={resetting} onClick={() => startReset(async () => {
                 const r = await resetLocationPrefs();
-                if (r.ok) { toast.success(r.message ?? "Réinitialisé"); router.refresh(); } else toast.error(friendlyError(r.error));
-              })}>Réinitialiser les valeurs par défaut</Button>
-              <Button type="submit" pending={pending} disabled={!dirty}>Enregistrer les préférences</Button>
+                if (r.ok) { toast.success(tm(r.message ?? "Réinitialisé")); router.refresh(); } else toast.error(tm(friendlyError(r.error)));
+              })}>{t("Réinitialiser les valeurs par défaut", "Reset to defaults")}</Button>
+              <Button type="submit" pending={pending} disabled={!dirty}>{t("Enregistrer les préférences", "Save preferences")}</Button>
             </div>
           </form>
         </CardBody>
       </Card>
 
       <Card>
-        <CardHeader title="Cache des estimations d’itinéraire" description="Les estimations réussies sont conservées 7 jours, uniquement dans votre compte, pour limiter les appels au fournisseur." />
+        <CardHeader title={t("Cache des estimations d’itinéraire", "Route estimate cache")} description={t("Les estimations réussies sont conservées 7 jours, uniquement dans votre compte, pour limiter les appels au fournisseur.", "Successful estimates are kept for 7 days, in your account only, to limit calls to the provider.")} />
         <CardBody>
           <Button variant="secondary" pending={clearing} onClick={() => startClear(async () => {
             const r = await clearRouteCache();
-            if (r.ok) toast.success(r.message ?? "Cache vidé"); else toast.error(friendlyError(r.error));
-          })}>Vider le cache d’itinéraires</Button>
+            if (r.ok) toast.success(tm(r.message ?? "Cache vidé")); else toast.error(tm(friendlyError(r.error)));
+          })}>{t("Vider le cache d’itinéraires", "Clear route cache")}</Button>
         </CardBody>
       </Card>
     </div>
@@ -147,6 +147,7 @@ export function LocationPrefsForm({ profile, supportedModes, defaultCountry }: {
 }
 
 export function SecurityForms() {
+  const { t, tm } = usePreferences();
   const [pending, start] = React.useTransition();
   const [others, startOthers] = React.useTransition();
   const [v, setV] = React.useState({ password: "", confirm: "" });
@@ -155,37 +156,37 @@ export function SecurityForms() {
   return (
     <div className="space-y-6">
       <Card>
-        <CardHeader title="Changer le mot de passe" description="8 caractères minimum, avec au moins une lettre et un chiffre." />
+        <CardHeader title={t("Changer le mot de passe", "Change password")} description={t("10 caractères minimum, avec au moins une lettre et un chiffre.", "At least 10 characters, with at least one letter and one digit.")} />
         <CardBody>
           <form className="grid max-w-md gap-4" onSubmit={(e) => {
             e.preventDefault();
             setErrors({});
             start(async () => {
               const r = await changePassword(v);
-              if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(friendlyError(r.error)); return; }
-              setV({ password: "", confirm: "" }); toast.success(r.message ?? "Mot de passe modifié");
+              if (!r.ok) { setErrors(r.fieldErrors ?? {}); toast.error(tm(friendlyError(r.error))); return; }
+              setV({ password: "", confirm: "" }); toast.success(tm(r.message ?? "Mot de passe modifié"));
             });
           }}>
-            <Field id="new_password" label="Nouveau mot de passe" error={errors.password} required>
+            <Field id="new_password" label={t("Nouveau mot de passe", "New password")} error={errors.password} required>
               <PasswordInput id="new_password" autoComplete="new-password" value={v.password} onChange={(e) => setV((p) => ({ ...p, password: e.target.value }))} />
             </Field>
-            <Field id="confirm_password" label="Confirmer le mot de passe" error={errors.confirm} required>
+            <Field id="confirm_password" label={t("Confirmer le mot de passe", "Confirm password")} error={errors.confirm} required>
               <PasswordInput id="confirm_password" autoComplete="new-password" value={v.confirm} onChange={(e) => setV((p) => ({ ...p, confirm: e.target.value }))} />
             </Field>
-            <div><Button type="submit" pending={pending} disabled={!v.password}>Changer le mot de passe</Button></div>
+            <div><Button type="submit" pending={pending} disabled={!v.password}>{t("Changer le mot de passe", "Change password")}</Button></div>
           </form>
         </CardBody>
       </Card>
 
       <Card>
-        <CardHeader title="Sessions" />
+        <CardHeader title={t("Sessions", "Sessions")} />
         <CardBody className="space-y-3">
-          <Alert tone="info">La session de ce navigateur est conservée de manière sécurisée. Vous pouvez fermer les autres sessions ouvertes sur vos appareils.</Alert>
+          <Alert tone="info">{t("La session de ce navigateur est conservée de manière sécurisée. Vous pouvez fermer les autres sessions ouvertes sur vos appareils.", "This browser’s session is stored securely. You can close the other sessions open on your devices.")}</Alert>
           <div className="flex flex-wrap gap-2">
             <Button variant="secondary" pending={others} onClick={() => startOthers(async () => {
               const r = await signOutOtherSessions();
-              if (r.ok) toast.success(r.message ?? "Fait"); else toast.error(friendlyError(r.error));
-            })}>Fermer les autres sessions</Button>
+              if (r.ok) toast.success(tm(r.message ?? "Fait")); else toast.error(tm(friendlyError(r.error)));
+            })}>{t("Fermer les autres sessions", "Close other sessions")}</Button>
           </div>
         </CardBody>
       </Card>

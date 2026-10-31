@@ -1,7 +1,8 @@
 "use client";
 import Link from "next/link";
 import { usePreferences } from "@/components/providers/preferences-provider";
-import { CalendarClock, MapPin, Users } from "lucide-react";
+import { Building2, CalendarClock, MapPin, Users } from "lucide-react";
+import { workplaceLabel } from "@/config/workplaces";
 import { MissionStatusBadge } from "@/components/ui/badge";
 import { LinkButton } from "@/components/ui/button";
 import type { MissionOverview } from "@/lib/types";
@@ -13,7 +14,8 @@ export function missionLocation(m: Pick<MissionOverview, "postal_code" | "city" 
 
 /** Carte de mission : l’effectif « sélectionné » et « confirmé » sont affichés séparément. */
 export function MissionCard({ m, timeZone }: { m: MissionOverview; timeZone: string }) {
-  const { t } = usePreferences();
+  const { t, locale } = usePreferences();
+  const place = workplaceLabel(m.workplace_type, m.workplace_name, locale);
   const closed = m.status === "cancelled" || m.status === "completed";
   return (
     <div className="card-surface lift p-4">
@@ -22,6 +24,7 @@ export function MissionCard({ m, timeZone }: { m: MissionOverview; timeZone: str
         <MissionStatusBadge status={m.status} />
       </div>
       <dl className="mt-2 space-y-1 text-sm text-muted">
+        {place ? <div className="flex items-center gap-2"><Building2 className="h-3.5 w-3.5 shrink-0" aria-hidden /><dd className="font-medium text-ink">{place}</dd></div> : null}
         <div className="flex items-center gap-2"><MapPin className="h-3.5 w-3.5 shrink-0" aria-hidden /><dd>{missionLocation(m)}{m.location_status !== "resolved" ? ` (${t("lieu à vérifier", "location to verify")})` : ""}</dd></div>
         <div className="flex items-center gap-2"><CalendarClock className="h-3.5 w-3.5 shrink-0" aria-hidden /><dd>{m.scheduled_start_at ? formatDateTime(m.scheduled_start_at, timeZone) : t("Date non définie", "No date set")}</dd></div>
         <div className="flex items-center gap-2"><Users className="h-3.5 w-3.5 shrink-0" aria-hidden /><dd>{t(`${m.selected_count} sur ${m.required_staff_count} sélectionné(s) · ${m.confirmed_count} confirmé(s)`, `${m.selected_count} of ${m.required_staff_count} selected · ${m.confirmed_count} confirmed`)}</dd></div>

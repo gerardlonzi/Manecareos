@@ -22,7 +22,7 @@ export function ProfileActions({ id, name, availability, archived }: { id: strin
       {!archived ? (
         <>
           <SearchablePicker id="profile-availability" className="w-48" value={availability} disabled={pending} onValueChange={(v) => act(() => setAvailability([id], v as AvailabilityStatus))}
-            options={[{ value: "available", label: t("Disponible", "Available") }, { value: "unavailable", label: t("Indisponible", "Unavailable") }, { value: "unknown", label: t("Inconnue", "Unknown") }]} />
+            options={[{ value: "available", label: t("Disponible", "Available"), dot: "green" as const }, { value: "unavailable", label: t("Indisponible", "Unavailable"), dot: "red" as const }, { value: "unknown", label: t("Inconnue", "Unknown"), dot: "amber" as const }]} />
           <Button variant="secondary" pending={pending} onClick={() => act(() => markContacted(id))}><CheckCheck className="h-4 w-4" aria-hidden /> {t("Marquer comme contacté", "Mark as contacted")}</Button>
         </>
       ) : null}

@@ -10,12 +10,15 @@ import { LocationFields } from "@/components/location/location-fields";
 import { SkillPicker } from "@/components/staff/skill-picker";
 import { Button } from "@/components/ui/button";
 import { Alert, Card, CardBody } from "@/components/ui/card";
+import { TwoColumn } from "@/components/ui/two-column";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { Field, FormPage, Input, Textarea } from "@/components/ui/form";
 import { SearchablePicker } from "@/components/ui/searchable-picker";
 import { useUnsavedWarning } from "@/components/use-unsaved-warning";
 import { usePreferences } from "@/components/providers/preferences-provider";
+import { WORKPLACE_TYPES } from "@/config/workplaces";
 import type { Mission, TransportMode } from "@/lib/types";
+import { hoursBetween, parseHoursInput } from "@/lib/hours";
 import { utcIsoToZonedLocal } from "@/lib/time";
 
 const MODES: TransportMode[] = ["driving", "walking", "cycling", "public_transport"];
@@ -28,6 +31,11 @@ const makeSchema = (t: (fr: string, en: string) => string) => z.object({
   required_skills: z.string().max(1000),
   scheduled_start_local: z.string(),
   scheduled_end_local: z.string(),
+  workplace_type: z.string().max(30),
+  workplace_name: z.string().max(120),
+  planned_hours: z.string().max(8).refine((v) => !v.trim() || parseHoursInput(v) !== null, t("Heures invalides (ex. 7,5 ou 7h30)", "Invalid hours (e.g. 7.5 or 7h30)")),
+  pay_rate: z.string().max(10).refine((v) => !v.trim() || (Number.isFinite(Number(v.replace(",", "."))) && Number(v.replace(",", ".")) >= 0), t("Montant invalide", "Invalid amount")),
+  pay_currency: z.enum(["GBP", "EUR", "USD"]),
   transport_mode: z.enum(["driving", "walking", "cycling", "public_transport"]),
   notes: z.string().max(4000),
   country_code: z.string().length(2, t("Choisissez un pays", "Choose a country")),
@@ -43,7 +51,7 @@ type Props = { mission?: Mission; defaultCountry: string; timeZone: string; supp
 
 export function MissionForm({ mission, defaultCountry, timeZone, supportedModes, defaultMode }: Props) {
   const router = useRouter();
-  const { t, tm } = usePreferences();
+  const { t, tm, locale } = usePreferences();
   const schema = React.useMemo(() => makeSchema(t), [t]);
   const [pending, start] = React.useTransition();
   const [formError, setFormError] = React.useState<string | null>(null);
@@ -61,6 +69,11 @@ export function MissionForm({ mission, defaultCountry, timeZone, supportedModes,
       required_skills: mission?.required_skills.join(", ") ?? "",
       scheduled_start_local: utcIsoToZonedLocal(mission?.scheduled_start_at, timeZone),
       scheduled_end_local: utcIsoToZonedLocal(mission?.scheduled_end_at, timeZone),
+      workplace_type: mission?.workplace_type ?? "",
+      workplace_name: mission?.workplace_name ?? "",
+      planned_hours: mission?.planned_hours != null ? String(mission.planned_hours) : "",
+      pay_rate: mission?.pay_rate != null ? String(mission.pay_rate) : "",
+      pay_currency: (mission?.pay_currency as "GBP" | "EUR" | "USD") ?? "GBP",
       transport_mode: mission?.transport_mode ?? (supportedModes.includes(defaultMode) ? defaultMode : supportedModes[0] ?? "driving"),
       notes: mission?.notes ?? "",
       country_code: mission?.country_code ?? defaultCountry,
@@ -71,6 +84,12 @@ export function MissionForm({ mission, defaultCountry, timeZone, supportedModes,
   });
   const { register, handleSubmit, setError, reset, setValue, watch, formState: { errors, isDirty } } = form;
   const requiredSkillsValue = watch("required_skills");
+  const startLocal = watch("scheduled_start_local"), endLocal = watch("scheduled_end_local"), plannedRaw = watch("planned_hours"), rateRaw = watch("pay_rate"), currency = watch("pay_currency");
+  // Calcul automatique des heures depuis début/fin (en heure locale : seule la différence compte).
+  const autoHours = startLocal && endLocal ? hoursBetween(`${startLocal}:00Z`, `${endLocal}:00Z`) : null;
+  const effectiveHours = parseHoursInput(plannedRaw) ?? autoHours;
+  const rate = Number(rateRaw.replace(",", "."));
+  const estimatedCost = effectiveHours != null && rateRaw.trim() && Number.isFinite(rate) ? Math.round(effectiveHours * rate * 100) / 100 : null;
   useUnsavedWarning(isDirty && !pending);
 
   const submit = (intent: "draft" | "open") =>
@@ -99,10 +118,12 @@ export function MissionForm({ mission, defaultCountry, timeZone, supportedModes,
 
   return (
     <FormProvider {...form}>
-      <FormPage>
+      <FormPage width="xl">
       <form onSubmit={(e) => e.preventDefault()} className="space-y-5 pb-4" noValidate>
         {formError ? <Alert tone="danger">{formError}</Alert> : null}
 
+        <TwoColumn
+          left={<>
         <Card>
           <CardBody className="space-y-4">
             <h2 className="text-sm font-semibold">{t("Détails de la mission", "Assignment details")}</h2>
@@ -116,15 +137,18 @@ export function MissionForm({ mission, defaultCountry, timeZone, supportedModes,
               <Field id="required_staff_count" label={t("Nombre de personnes requises", "Number of people required")} error={errors.required_staff_count?.message} required>
                 <Input id="required_staff_count" type="number" inputMode="numeric" min={1} max={1000} step={1} aria-invalid={!!errors.required_staff_count} {...register("required_staff_count")} />
               </Field>
+              <Field id="workplace_type" label={t("Lieu de travail", "Place of work")} hint={t("Où le staff va travailler : maison de retraite, hôpital, domicile…", "Where the staff will work: care home, hospital, private home…")}>
+                <input type="hidden" {...register("workplace_type")} />
+                <SearchablePicker id="workplace_type" value={watch("workplace_type")} clearable searchable={false} placeholder={t("Choisir un type de lieu", "Choose a type of place")}
+                  options={WORKPLACE_TYPES.map((w) => ({ value: w.value, label: locale === "fr" ? w.fr : w.en }))}
+                  onValueChange={(v) => setValue("workplace_type", v, { shouldDirty: true })} />
+              </Field>
+              <Field id="workplace_name" label={t("Nom de l’établissement", "Name of the place")} error={errors.workplace_name?.message} hint={t("Ex. : Résidence Les Lilas, Sunrise Care Home…", "E.g. Sunrise Care Home, St Mary’s Hospital…")}>
+                <Input id="workplace_name" autoComplete="off" maxLength={120} {...register("workplace_name")} />
+              </Field>
               <Field id="required_skills" label={t("Compétences requises", "Required skills")} error={errors.required_skills?.message} hint={t("Recherchez puis sélectionnez les compétences nécessaires. Seul le staff correspondant à tous les critères sera proposé.", "Search and select the required skills. Only staff matching all selected criteria will be suggested.")} className="sm:col-span-2">
                 <input type="hidden" {...register("required_skills")} />
                 <SkillPicker id="mission-skills-search" value={requiredSkillsValue} onChange={(value) => setValue("required_skills", value, { shouldDirty: true, shouldValidate: true })} />
-              </Field>
-              <Field id="scheduled_start_local" label={`${t("Début (heure locale", "Start (local time")}, ${timeZone})`} error={errors.scheduled_start_local?.message}>
-                <Input id="scheduled_start_local" type="datetime-local" {...register("scheduled_start_local")} />
-              </Field>
-              <Field id="scheduled_end_local" label={t("Fin", "End")} error={errors.scheduled_end_local?.message}>
-                <Input id="scheduled_end_local" type="datetime-local" aria-invalid={!!errors.scheduled_end_local} {...register("scheduled_end_local")} />
               </Field>
               <Field id="description" label={t("Description", "Description")} error={errors.description?.message} className="sm:col-span-2">
                 <Textarea id="description" rows={3} {...register("description")} />
@@ -137,6 +161,31 @@ export function MissionForm({ mission, defaultCountry, timeZone, supportedModes,
           <CardBody>
             <LocationFields savedStatus={mission?.location_status} verifiedAt={mission?.location_updated_at} timeZone={timeZone} noun="la mission" />
             <p className="mt-3 text-xs text-muted">{t("La recherche de staff par distance reste indisponible tant que le lieu de la mission n’est pas vérifié.", "Staff distance search remains unavailable until the assignment location is verified.")}</p>
+          </CardBody>
+        </Card>
+
+          </>}
+          right={<>
+        <Card>
+          <CardBody className="space-y-4">
+            <h2 className="text-sm font-semibold">{t("Horaires, heures et paie", "Schedule, hours and pay")}</h2>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Field id="scheduled_start_local" label={`${t("Début (heure locale", "Start (local time")}, ${timeZone})`} error={errors.scheduled_start_local?.message}>
+                <Input id="scheduled_start_local" type="datetime-local" {...register("scheduled_start_local")} />
+              </Field>
+              <Field id="scheduled_end_local" label={t("Fin", "End")} error={errors.scheduled_end_local?.message}>
+                <Input id="scheduled_end_local" type="datetime-local" aria-invalid={!!errors.scheduled_end_local} {...register("scheduled_end_local")} />
+              </Field>
+              <Field id="planned_hours" label={t("Heures de travail", "Working hours")} error={errors.planned_hours?.message} hint={autoHours != null && !plannedRaw.trim() ? t(`Calculées automatiquement : ${autoHours} h`, `Calculated automatically: ${autoHours} h`) : t("Laissez vide pour calcul auto depuis début/fin, ou saisissez 7,5 / 7h30.", "Leave empty to auto-calculate from start/end, or enter 7.5 / 7h30.")}>
+                <Input id="planned_hours" inputMode="decimal" placeholder="7h30" autoComplete="off" aria-invalid={!!errors.planned_hours} {...register("planned_hours")} />
+              </Field>
+              <Field id="pay_rate" label={t("Paie horaire", "Hourly pay")} error={errors.pay_rate?.message} hint={estimatedCost != null ? t(`Coût estimé par personne : ${estimatedCost} ${currency}`, `Estimated cost per person: ${estimatedCost} ${currency}`) : undefined}>
+                <div className="flex gap-2">
+                  <Input id="pay_rate" inputMode="decimal" placeholder="13,50" autoComplete="off" aria-invalid={!!errors.pay_rate} {...register("pay_rate")} />
+                  <select aria-label={t("Devise", "Currency")} className="h-10 rounded-lg border border-line bg-card px-2 text-sm" {...register("pay_currency")}><option>GBP</option><option>EUR</option><option>USD</option></select>
+                </div>
+              </Field>
+            </div>
           </CardBody>
         </Card>
 
@@ -156,6 +205,9 @@ export function MissionForm({ mission, defaultCountry, timeZone, supportedModes,
             </Field>
           </CardBody>
         </Card>
+
+          </>}
+        />
 
         <div className="sticky bottom-0 z-10 flex flex-wrap items-center justify-end gap-2 border-t border-line bg-bg/90 py-3 backdrop-blur">
           <Button variant="ghost" onClick={cancel} disabled={pending}>{t("Annuler", "Cancel")}</Button>

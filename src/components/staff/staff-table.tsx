@@ -14,14 +14,20 @@ import { DropdownMenu } from "@/components/ui/dropdown-menu";
 import { Flag } from "@/components/ui/flag";
 import { SearchablePicker } from "@/components/ui/searchable-picker";
 import { SkillChips } from "@/components/staff/skill-picker";
+import { cn } from "@/lib/utils";
 import { usePreferences } from "@/components/providers/preferences-provider";
 import { downloadCsv } from "@/lib/download";
 import type { AvailabilityStatus, Staff } from "@/lib/types";
+import type { Compliance } from "@/lib/documents";
+import { ComplianceBadge, ComplianceTip } from "@/components/staff/compliance-badge";
+import { HoursEditor } from "@/components/staff/hours-editor";
 
-const th = "px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted whitespace-nowrap";
-const td = "px-3 py-2 align-middle whitespace-nowrap";
+// Les cellules peuvent passer à la ligne (le texte français est plus long) ; la colonne Actions reste collée à droite et toujours visible.
+const th = "px-3 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wide text-muted";
+const td = "px-3 py-2 align-middle";
+const stickyAct = "sticky right-0 z-[1] bg-surface shadow-[-8px_0_8px_-8px_rgb(15_27_42/0.18)]";
 
-export function StaffTable({ rows, photos }: { rows: Staff[]; photos: Record<string, string> }) {
+export function StaffTable({ rows, photos, compliance, weekHours }: { rows: Staff[]; photos: Record<string, string>; compliance: Record<string, Compliance>; weekHours: Record<string, number> }) {
   const { t, tm, locale } = usePreferences();
   const router = useRouter();
   const [pending, start] = React.useTransition();
@@ -37,16 +43,17 @@ export function StaffTable({ rows, photos }: { rows: Staff[]; photos: Record<str
     if (r.ok) { toast.success(tm(r.message ?? "Terminé")); setSelected(new Set()); router.refresh(); } else toast.error(tm(r.error));
   };
   const avail: { v: AvailabilityStatus; fr: string; en: string }[] = [{ v: "available", fr: "Disponible", en: "Available" }, { v: "unavailable", fr: "Indisponible", en: "Unavailable" }, { v: "unknown", fr: "Inconnue", en: "Unknown" }];
-  const availOptions = avail.map((a) => ({ value: a.v, label: locale === "fr" ? a.fr : a.en }));
+  const availOptions = avail.map((a) => ({ value: a.v, label: locale === "fr" ? a.fr : a.en, dot: (a.v === "available" ? "green" : a.v === "unavailable" ? "red" : "amber") as "green" | "red" | "amber" }));
 
   return (
     <div>
-      <div className="overflow-x-auto md:overflow-visible">
+      {/* Le tableau défile dans son propre cadre (horizontal ET vertical) : rien ne sort de la page quand le texte s'allonge (FR/EN), l'en-tête et la colonne Actions restent visibles. */}
+      <div className="scroll-thin max-h-[calc(100dvh-var(--table-top)-6rem)] overflow-auto rounded-xl" style={{ "--table-top": "0px" } as React.CSSProperties}>
         <table className="data-table w-full min-w-[56rem] border-separate border-spacing-0 rounded-xl border border-line bg-surface text-sm shadow-[var(--shadow-card)]">
           <thead>
             {selected.size > 0 ? (
               <tr>
-                <th colSpan={8} className="!px-3 !py-0 !normal-case">
+                <th colSpan={9} className="!px-3 !py-0 !normal-case">
                   <div role="region" aria-label={t("Actions groupées", "Bulk actions")} className="flex h-12 items-center gap-2 text-sm font-medium">
                     <input type="checkbox" aria-label={t("Tout désélectionner", "Deselect all")} checked={allSelected} onChange={() => setSelected(allSelected ? new Set() : new Set(rows.map((r) => r.id)))} className="h-4 w-4 accent-[var(--color-primary)]" />
                     <span className="mr-auto whitespace-nowrap normal-case tracking-normal text-ink">{t(`${selected.size} sélectionné(s)`, `${selected.size} selected`)}</span>
@@ -68,41 +75,43 @@ export function StaffTable({ rows, photos }: { rows: Staff[]; photos: Record<str
               <tr>
                 <th className={`${th} w-10`}><input type="checkbox" aria-label={t("Sélectionner la page", "Select this page")} checked={allSelected} onChange={() => setSelected(new Set(rows.map((r) => r.id)))} className="h-4 w-4 accent-[var(--color-primary)]" /></th>
                 <th className={th}>{t("Staff", "Staff")}</th>
-                <th className={th}>{t("Téléphone", "Phone")}</th>
+                <th className={`${th} max-2xl:hidden`}>{t("Téléphone", "Phone")}</th>
                 <th className={th}>{t("Localisation", "Location")}</th>
                 <th className={th}>{t("Compétences", "Skills")}</th>
-                <th className={`${th} text-right`}>{t("Heures/sem.", "Hrs/week")}</th>
+                <th className={th}>{t("Documents", "Documents")}</th>
+                <th className={th}>{t("Heures (semaine)", "Hours (week)")}</th>
                 <th className={th}>{t("Disponibilité", "Availability")}</th>
-                <th className={`${th} text-right`}>{t("Actions", "Actions")}</th>
+                <th className={`${th} ${stickyAct} text-right`}>{t("Actions", "Actions")}</th>
               </tr>
             )}
           </thead>
           <tbody className="divide-y divide-line">
             {rows.map((s) => (
-              <tr key={s.id} data-selected={selected.has(s.id)} className="border-t border-line">
+              <tr key={s.id} data-selected={selected.has(s.id)} className={cn("border-t border-line", compliance[s.id] && !compliance[s.id]!.complete && !s.archived_at && "bg-danger-soft/45 hover:bg-danger-soft/70")}>
                 <td className={`${td} w-10`}><input type="checkbox" aria-label={t(`Sélectionner ${s.full_name}`, `Select ${s.full_name}`)} checked={selected.has(s.id)} onChange={() => toggle(s.id)} className="h-4 w-4 accent-[var(--color-primary)]" /></td>
                 <td className={td}>
                   <Link href={`/staff/${s.id}`} className="flex items-center gap-2.5 hover:text-primary">
                     <Avatar name={s.full_name} photoUrl={photos[s.id]} size={32} />
-                    <span className="min-w-0"><span className="block max-w-[14rem] truncate font-medium leading-tight">{s.full_name}{s.archived_at ? <Badge className="ml-2">{t("Archivé", "Archived")}</Badge> : null}</span><span className="block font-mono text-[11px] leading-tight text-muted">{s.staff_code ?? "—"}</span></span>
+                    <span className="min-w-0"><span className="block max-w-[10rem] truncate font-medium leading-tight xl:max-w-[12rem]">{s.full_name}{s.archived_at ? <Badge className="ml-2">{t("Archivé", "Archived")}</Badge> : null}</span><span className="block font-mono text-[11px] leading-tight text-muted">{s.staff_code ?? "—"}</span></span>
                   </Link>
                 </td>
-                <td className={`${td} text-muted`}>{s.phone ?? "—"}</td>
+                <td className={`${td} whitespace-nowrap text-muted max-2xl:hidden`}>{s.phone ?? "—"}</td>
                 <td className={td}>
-                  <span className="flex items-center gap-2">
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
                     <Flag code={s.country_code} region={s.region} />
                     <span className="max-w-[10rem] truncate">{s.city ?? <span className="text-muted">—</span>}</span>
                     {s.postal_code ? <span className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[11px] text-muted ring-1 ring-line">{s.postal_code}</span> : null}
                     {s.location_status !== "resolved" ? <span title={s.location_status === "pending" ? t("Localisation à vérifier", "Location needs checking") : t("Localisation à revoir", "Location needs review")}><TriangleAlert className="h-3.5 w-3.5 text-warning" aria-hidden /></span> : null}
                   </span>
                 </td>
-                <td className={td}><SkillChips skills={s.skills} /></td>
-                <td className={`${td} text-right tabular-nums`}>{s.weekly_hours != null ? `${s.weekly_hours} h` : <span className="text-muted">—</span>}</td>
-                <td className={`${td} w-44`}>
+                <td className={`${td} max-w-[12rem]`}><SkillChips skills={s.skills} /></td>
+                <td className={`${td} whitespace-nowrap`}>{compliance[s.id] ? <ComplianceBadge compliance={compliance[s.id]!} /> : null}</td>
+                <td className={td}><HoursEditor staffId={s.id} cap={s.weekly_hours} used={weekHours[s.id] ?? 0} disabled={Boolean(s.archived_at)} /></td>
+                <td className={`${td} w-40 min-w-36`}>
                   <SearchablePicker id={`av-${s.id}`} size="sm" value={s.availability_status} options={availOptions} disabled={pending || !!s.archived_at}
                     onValueChange={(v) => start(async () => done(await setAvailability([s.id], v as AvailabilityStatus)))} />
                 </td>
-                <td className={td}>
+                <td className={`${td} ${stickyAct}`}>
                   <div className="flex justify-end gap-0.5">
                     <Link href={`/staff/${s.id}`} className="grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-primary-soft hover:text-primary" aria-label={t(`Voir ${s.full_name}`, `View ${s.full_name}`)} title={t("Voir le profil", "View profile")}><Eye className="h-4 w-4" aria-hidden /></Link>
                     <Link href={`/staff/${s.id}/edit`} className="grid h-8 w-8 place-items-center rounded-md text-muted hover:bg-primary-soft hover:text-ink" aria-label={t(`Modifier ${s.full_name}`, `Edit ${s.full_name}`)} title={t("Modifier", "Edit")}><Pencil className="h-4 w-4" aria-hidden /></Link>

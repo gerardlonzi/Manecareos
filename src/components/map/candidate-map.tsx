@@ -7,7 +7,7 @@ import { Layers2, Satellite, Maximize2, Minimize2 } from "lucide-react";
 import { usePreferences } from "@/components/providers/preferences-provider";
 import { MapNotice } from "./map-notice";
 
-export type MapCandidate = { id: string; name: string; latitude: number; longitude: number; assigned: boolean; routeKnown: boolean };
+export type MapCandidate = { id: string; name: string; latitude: number; longitude: number; assigned: boolean; routeKnown: boolean; unavailable?: boolean };
 
 type Props = {
   token?: string;
@@ -25,7 +25,7 @@ type Props = {
   onToggleExpand?: () => void;
 };
 
-const COLORS = { matching: "#0878c0", assigned: "#0c7c59", highlighted: "#e0a020", origin: "#b3151b" };
+const COLORS = { matching: "#0878c0", assigned: "#0c7c59", highlighted: "#e0a020", origin: "#b3151b", unavailable: "#d32f2f" };
 
 export default function CandidateMap({ token, origin, radiusKm, candidates, highlightedId, onMarkerClick, routeCoordinates, approxLine = null, className = "h-[28rem]", expanded = false, onToggleExpand }: Props) {
   const container = React.useRef<HTMLDivElement>(null);
@@ -38,6 +38,7 @@ export default function CandidateMap({ token, origin, radiusKm, candidates, high
   const [mapStyle, setMapStyle] = React.useState<"streets" | "satellite">("streets");
   const { t } = usePreferences();
   React.useEffect(() => { clickRef.current = onMarkerClick; });
+  // Agrandir / réduire la carte : Mapbox doit recalculer sa taille.
   React.useEffect(() => { const id = window.setTimeout(() => mapRef.current?.resize(), 60); return () => window.clearTimeout(id); }, [expanded]);
 
   const geojson = React.useMemo(() => ({
@@ -45,7 +46,7 @@ export default function CandidateMap({ token, origin, radiusKm, candidates, high
     features: candidates.map((c) => ({
       type: "Feature" as const,
       geometry: { type: "Point" as const, coordinates: [c.longitude, c.latitude] },
-      properties: { id: c.id, name: c.name, state: c.id === highlightedId ? "highlighted" : c.assigned ? "assigned" : "matching" },
+      properties: { id: c.id, name: c.name, state: c.id === highlightedId ? "highlighted" : c.assigned ? "assigned" : c.unavailable ? "unavailable" : "matching", name_label: c.unavailable ? `${c.name} — indisponible / unavailable` : c.name },
     })),
   }), [candidates, highlightedId]);
 
@@ -81,7 +82,7 @@ export default function CandidateMap({ token, origin, radiusKm, candidates, high
             id: "points", type: "circle", source: "candidates", filter: ["!", ["has", "point_count"]],
             paint: {
               "circle-radius": ["case", ["==", ["get", "state"], "highlighted"], 11, 8],
-              "circle-color": ["match", ["get", "state"], "highlighted", COLORS.highlighted, "assigned", COLORS.assigned, COLORS.matching],
+              "circle-color": ["match", ["get", "state"], "highlighted", COLORS.highlighted, "assigned", COLORS.assigned, "unavailable", COLORS.unavailable, COLORS.matching],
               "circle-stroke-width": 2, "circle-stroke-color": "#ffffff",
             },
           });
@@ -183,6 +184,7 @@ export default function CandidateMap({ token, origin, radiusKm, candidates, high
         <Legend color={COLORS.origin} label={t("Lieu de la mission", "Assignment location")} square />
         <Legend color={COLORS.matching} label={t("Candidat (lieu enregistré)", "Candidate (saved location)")} />
         <Legend color={COLORS.assigned} label={t("Déjà sélectionné", "Already selected")} />
+        <Legend color={COLORS.unavailable} label={t("Indisponible", "Unavailable")} />
         <Legend color={COLORS.highlighted} label={t("Candidat sélectionné", "Highlighted candidate")} />
       </div>
       <p className="pointer-events-none absolute right-3 top-3 rounded bg-surface/95 px-2 py-1 text-xs font-medium shadow-card">{candidates.length} {t("sur la carte", "on map")}</p>

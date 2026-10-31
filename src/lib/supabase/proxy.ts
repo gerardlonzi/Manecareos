@@ -1,8 +1,9 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { isSupabaseConfigured, supabaseEnv } from "@/lib/env";
+import { isTwoFactorRequired, TWO_FACTOR_COOKIE, twoFactorSecret, verifyTwoFactorToken } from "@/lib/security/token";
 
-const PRIVATE_PREFIXES = ["/dashboard", "/staff", "/find-staff", "/missions", "/activity", "/notifications", "/settings"];
+const PRIVATE_PREFIXES = ["/dashboard", "/staff", "/find-staff", "/missions", "/activity", "/notifications", "/settings", "/hours", "/api/documents"];
 const AUTH_PAGES = ["/login", "/signup", "/forgot-password"];
 
 const matches = (path: string, prefixes: string[]) => prefixes.some((p) => path === p || path.startsWith(`${p}/`));
@@ -37,15 +38,29 @@ export async function updateSession(request: NextRequest) {
 
   // getClaims valide la signature du JWT ; l'autorisation fine reste faite côté serveur (requireUser + RLS).
   const { data } = await supabase.auth.getClaims();
-  const authenticated = Boolean(data?.claims?.sub);
+  const userId = data?.claims?.sub;
+  const authenticated = Boolean(userId);
+
+  // Deuxième facteur : le mot de passe seul ne suffit pas, il faut le cookie signé délivré après saisie du code reçu par e-mail.
+  let twoFactorOk = true;
+  if (authenticated && isTwoFactorRequired()) {
+    const secret = twoFactorSecret();
+    twoFactorOk = secret ? await verifyTwoFactorToken(request.cookies.get(TWO_FACTOR_COOKIE)?.value, userId!, secret) : false;
+  }
 
   if (!authenticated && isPrivate) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/login";
+    redirect.search = isPrivate ? `?next=${encodeURIComponent(path + request.nextUrl.search)}` : "";
+    return NextResponse.redirect(redirect);
+  }
+  if (authenticated && !twoFactorOk && isPrivate) {
+    const redirect = request.nextUrl.clone();
+    redirect.pathname = "/auth/verify";
     redirect.search = `?next=${encodeURIComponent(path + request.nextUrl.search)}`;
     return NextResponse.redirect(redirect);
   }
-  if (authenticated && matches(path, AUTH_PAGES)) {
+  if (authenticated && twoFactorOk && matches(path, AUTH_PAGES)) {
     const redirect = request.nextUrl.clone();
     redirect.pathname = "/dashboard";
     redirect.search = "";

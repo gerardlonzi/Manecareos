@@ -5,19 +5,23 @@ import { FormProvider, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { Clock3, MapPin, Sparkles, UserRound } from "lucide-react";
+import { Clock3, MapPin, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { saveStaffDocument } from "@/actions/documents";
 import { removeStaffPhoto, saveStaff, uploadStaffPhoto } from "@/actions/staff";
 import { Button } from "@/components/ui/button";
 import { Alert, Card, CardBody } from "@/components/ui/card";
+import { TwoColumn } from "@/components/ui/two-column";
 import { Field, FormPage, Input, Textarea } from "@/components/ui/form";
 import { SearchablePicker } from "@/components/ui/searchable-picker";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { usePreferences } from "@/components/providers/preferences-provider";
 import { LocationFields } from "@/components/location/location-fields";
+import { NewStaffDocuments, isFilled, type DocEntries } from "@/components/staff/new-staff-documents";
 import { PhotoField, type PhotoChange } from "@/components/staff/photo-field";
 import { SkillPicker } from "@/components/staff/skill-picker";
 import { useUnsavedWarning } from "@/components/use-unsaved-warning";
 import { COUNTRY_LIST, countryName } from "@/config/countries";
+import type { DocType } from "@/lib/documents";
 import type { LocationStatus, Staff } from "@/lib/types";
 
 const makeSchema = (t: (fr: string, en: string) => string) => z.object({
@@ -44,7 +48,7 @@ function inferPhoneCountry(phone: string | null | undefined, fallback: string) {
 const newStaffCode = () => `STF-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
 const empty = (country: string): Values => ({ full_name: "", staff_code: "", phone: "", phone_country_code: country, email: "", weekly_hours: "", country_code: country, postal_code: "", city: "", region: "", skills: "", availability_status: "unknown", notes: "" });
 
-export function StaffForm({ staff, defaultCountry, timeZone, photoUrl }: { staff?: Staff; defaultCountry: string; timeZone: string; photoUrl?: string | null }) {
+export function StaffForm({ staff, defaultCountry, timeZone, photoUrl, documents, docTypes }: { staff?: Staff; defaultCountry: string; timeZone: string; photoUrl?: string | null; documents?: React.ReactNode; docTypes?: DocType[] }) {
   const router = useRouter();
   const { t, tm, locale } = usePreferences();
   const schema = React.useMemo(() => makeSchema(t), [t]);
@@ -52,6 +56,7 @@ export function StaffForm({ staff, defaultCountry, timeZone, photoUrl }: { staff
   const [formError, setFormError] = React.useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = React.useState(false);
   const [photo, setPhoto] = React.useState<PhotoChange>({ file: null, remove: false });
+  const [docEntries, setDocEntries] = React.useState<DocEntries>({});
   const submitting = React.useRef(false);
 
   const initial: Values = staff ? {
@@ -72,7 +77,7 @@ export function StaffForm({ staff, defaultCountry, timeZone, photoUrl }: { staff
   useUnsavedWarning((isDirty || photoDirty) && !pending);
 
   const dialOptions = React.useMemo(() => COUNTRY_LIST.map((c) => ({ value: c.code, label: `+${c.dialCode}`, flag: c.code.toLowerCase(), description: countryName(c.code, locale), search: `${countryName(c.code, "fr")} ${countryName(c.code, "en")} ${c.code}` })), [locale]);
-  const availOptions = [{ value: "available", label: t("Disponible", "Available") }, { value: "unavailable", label: t("Indisponible", "Unavailable") }, { value: "unknown", label: t("Inconnue", "Unknown") }];
+  const availOptions = [{ value: "available", label: t("Disponible", "Available"), dot: "green" as const }, { value: "unavailable", label: t("Indisponible", "Unavailable"), dot: "red" as const }, { value: "unknown", label: t("Inconnue", "Unknown"), dot: "amber" as const }];
 
   const submit = (another: boolean) => handleSubmit((values) => {
     if (submitting.current) return;
@@ -89,10 +94,24 @@ export function StaffForm({ staff, defaultCountry, timeZone, photoUrl }: { staff
       const id = r.data?.id ?? staff?.id;
       if (id && photo.file) { const fd = new FormData(); fd.set("photo", photo.file); const pr = await uploadStaffPhoto(id, fd); if (!pr.ok) toast.error(tm(pr.error)); }
       else if (id && photo.remove && (staff?.photo_path || photoUrl)) await removeStaffPhoto(id);
+      // Nouveau staff : les dates de documents saisies sont enregistrées (le fichier ou le lien se joint plus tard, c'est facultatif).
+      let docsFailed = 0;
+      if (!staff && id) {
+        for (const [typeId, e] of Object.entries(docEntries)) {
+          if (!isFilled(e)) continue;
+          const fd = new FormData();
+          fd.set("expires_at", e.date); fd.set("no_expiry", e.none ? "true" : "false");
+          const dr = await saveStaffDocument(id, typeId, fd);
+          if (!dr.ok) { docsFailed++; toast.error(tm(dr.error)); }
+        }
+      }
+      const missingMandatory = (docTypes ?? []).filter((x) => x.mandatory && !x.archived_at && !isFilled(docEntries[x.id])).length;
       submitting.current = false;
       toast.success(tm(r.message ?? "Enregistré"));
       reset(values); setPhoto({ file: null, remove: false });
-      if (another && !staff) { reset(empty(values.country_code)); setValue("staff_code", newStaffCode(), { shouldDirty: false }); router.refresh(); return; }
+      if (another && !staff) { reset(empty(values.country_code)); setValue("staff_code", newStaffCode(), { shouldDirty: false }); setDocEntries({}); router.refresh(); return; }
+      // Il manque encore des documents obligatoires (ou un enregistrement a échoué) : on ouvre la fiche pour les compléter.
+      if (!staff && id && (missingMandatory > 0 || docsFailed > 0)) { toast.info(t("Complétez les documents obligatoires pour pouvoir assigner ce staff.", "Complete the mandatory documents so this staff member can be assigned.")); router.push(`/staff/${id}/edit#documents`); router.refresh(); return; }
       router.push(`/staff/${id}`); router.refresh();
     });
   });
@@ -102,10 +121,12 @@ export function StaffForm({ staff, defaultCountry, timeZone, photoUrl }: { staff
 
   return (
     <FormProvider {...form}>
-      <FormPage>
-        <form onSubmit={(e) => void submit(false)(e)} className="space-y-5 pb-4" noValidate>
+      <FormPage width="xl">
+        <form onSubmit={(e) => void submit(false)(e)} className="space-y-5 pb-4 mt-5" noValidate>
           {formError ? <Alert tone="danger">{formError}</Alert> : null}
 
+          <TwoColumn
+            left={<>
           <Card><CardBody>
             {section(<UserRound className="h-4 w-4 text-primary" aria-hidden />, t("Identité et contact", "Identity and contact"))}
             <div className="space-y-4">
@@ -134,6 +155,8 @@ export function StaffForm({ staff, defaultCountry, timeZone, photoUrl }: { staff
             <LocationFields savedStatus={staff?.location_status as LocationStatus | undefined} verifiedAt={staff?.location_updated_at} timeZone={timeZone} />
           </CardBody></Card>
 
+            </>}
+            right={<>
           <Card><CardBody>
             {section(<Clock3 className="h-4 w-4 text-primary" aria-hidden />, t("Disponibilité de travail", "Working time"))}
             <Field id="weekly_hours" label={t("Heures de travail par semaine", "Working hours per week")} error={errors.weekly_hours?.message} hint={t("Facultatif. Ex. : 37,5", "Optional. E.g. 37.5")} className="max-w-xs">
@@ -149,6 +172,14 @@ export function StaffForm({ staff, defaultCountry, timeZone, photoUrl }: { staff
             </Field>
             <Field id="notes" label="Notes" error={errors.notes?.message}><Textarea id="notes" rows={4} placeholder={t("Informations utiles pour l’équipe…", "Useful information for the team…")} {...register("notes")} /></Field>
           </CardBody></Card>
+              <div id="documents" className="scroll-mt-40">
+                <Card><CardBody>
+                  {section(<ShieldCheck className="h-4 w-4 text-primary" aria-hidden />, t("Documents obligatoires", "Mandatory documents"))}
+                  {staff ? documents : <NewStaffDocuments types={docTypes ?? []} value={docEntries} onChange={setDocEntries} />}
+                </CardBody></Card>
+              </div>
+            </>}
+          />
 
           <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-end gap-2 border-t border-line bg-bg/90 px-1 py-3 backdrop-blur">
             <Button variant="ghost" onClick={cancel} disabled={pending}>{t("Annuler", "Cancel")}</Button>

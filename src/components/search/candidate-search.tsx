@@ -8,9 +8,12 @@ import { toast } from "sonner";
 
 import { exportCandidatesCsv } from "@/actions/export";
 import { selectStaffForMission } from "@/actions/assignments";
+import { describeIssue } from "@/lib/assignment-guard";
 import { estimateRoutes, getTravelOptions, searchNearby, type TravelOptions } from "@/actions/search";
 import CandidateMap from "@/components/map/candidate-map-lazy";
 import { ContactButtons } from "@/components/staff/contact-buttons";
+import { ComplianceBadge, complianceDetails } from "@/components/staff/compliance-badge";
+import { HoursEditor } from "@/components/staff/hours-editor";
 import { SkillChips, SkillPicker } from "@/components/staff/skill-picker";
 import { usePreferences } from "@/components/providers/preferences-provider";
 import { AssignmentBadge, AvailabilityBadge, Badge } from "@/components/ui/badge";
@@ -31,6 +34,7 @@ import { cn, normalizeSkills } from "@/lib/utils";
 
 const MODES: TransportMode[] = ["walking", "cycling", "driving", "public_transport"];
 const ROUTE_BATCH = 8;
+const AUTO_RADII = [50, 100];
 /** En deçà de ce rayon autour du point de recherche, un candidat compte comme « sur place » même si sa ville diffère. */
 const SAME_TOWN_RADIUS_M = 3000;
 
@@ -54,7 +58,7 @@ type Props = {
 export type SharedMapState = {
   origin: { latitude: number; longitude: number; label: string; title?: string };
   radiusKm: number;
-  candidates: { id: string; name: string; latitude: number; longitude: number; assigned: boolean; routeKnown: boolean }[];
+  candidates: { id: string; name: string; latitude: number; longitude: number; assigned: boolean; routeKnown: boolean; unavailable: boolean }[];
   highlightedId: string | null;
   onMarkerClick: (id: string) => void;
   routeCoordinates: [number, number][] | null;
@@ -71,7 +75,12 @@ export function CandidateSearch({ target, routing, mapToken, unit, defaults, mis
   const dist = React.useCallback((m: number | null | undefined, u: DistanceUnit = unit) => { const s = formatDistance(m, u); return locale === "en" ? s.replace(",", ".") : s; }, [unit, locale]);
   const modeLabel: Record<TransportMode, string> = { walking: t("À pied", "On foot"), cycling: t("À vélo", "By bike"), driving: t("En voiture", "By car"), public_transport: t("En train", "By train") };
 
-  const [radiusKm, setRadiusKm] = React.useState(defaults.radiusKm);
+  const [userRadiusKm, setUserRadiusKm] = React.useState(defaults.radiusKm);
+  // Élargissement automatique : si personne n’habite sur place, on cherche tout de suite dans les villes alentour (50 puis 100 km).
+  const [autoRadius, setAutoRadius] = React.useState<number | null>(null);
+  const manualRadius = React.useRef(false);
+  const radiusKm = autoRadius ?? userRadiusKm;
+  const setRadiusKm = (km: number) => { manualRadius.current = true; setAutoRadius(null); setUserRadiusKm(km); };
   const [availability, setAvailability] = React.useState<"available" | "all">(defaults.availability);
   const [skillsText, setSkillsText] = React.useState("");
   const [maxResults, setMaxResults] = React.useState(50);
@@ -123,6 +132,12 @@ export function CandidateSearch({ target, routing, mapToken, unit, defaults, mis
         if (id !== searchId.current) return;
         setSearching(false);
         if (!response.ok || !response.data) { setResult(null); setError(tm(response.ok ? "Aucun résultat n’a été renvoyé. Réessayez." : response.error)); return; }
+        // Aucun staff sur place (ou presque) : on élargit automatiquement le rayon, sans que l’utilisateur ait à ouvrir les filtres.
+        if (!manualRadius.current) {
+          const onSite = groupByTown(response.data.candidates, { originCity, sameTownRadiusM: SAME_TOWN_RADIUS_M }).sameTown.length;
+          const next = AUTO_RADII.find((k) => k > params.radiusKm);
+          if (onSite === 0 && response.data.candidates.length < 5 && next !== undefined && !response.data.truncated) { setAutoRadius(next); return; }
+        }
         setError(null); setResult(response.data); setHighlightedId(null); setTravel(null);
         void loadRoutes(response.data, listMode);
       });
@@ -181,8 +196,13 @@ export function CandidateSearch({ target, routing, mapToken, unit, defaults, mis
   const select = async (c: CandidateDTO) => {
     if (!mission) return;
     setSelectingId(c.id);
-    const response = await selectStaffForMission(mission.id, c.id);
+    let response = await selectStaffForMission(mission.id, c.id);
+    if (!response.ok && response.issues?.length && !response.issues.some((i) => i.level === "block")) {
+      const text = response.issues.map((i) => `• ${describeIssue(i, locale)}`).join("\n");
+      if (window.confirm(`${t("Points d’attention :", "Warnings:")}\n${text}\n\n${t("Attribuer quand même ?", "Assign anyway?")}`)) response = await selectStaffForMission(mission.id, c.id, true);
+    }
     setSelectingId(null);
+    if (!response.ok && response.issues?.length) { toast.error(response.issues.map((i) => describeIssue(i, locale)).join(" ")); return; }
     if (!response.ok) { toast.error(tm(response.error)); return; }
     toast.success(tm(response.message ?? "Sélectionné"));
     setResult((prev) => prev ? { ...prev, candidates: prev.candidates.map((x) => x.id === c.id ? { ...x, assignment: { id: response.data!.assignmentId, status: "selected" } } : x) } : prev);
@@ -202,17 +222,26 @@ export function CandidateSearch({ target, routing, mapToken, unit, defaults, mis
   const row = (c: (typeof shown)[number]) => {
     const active = c.id === highlightedId;
     const r: RouteEstimate | undefined = c.route;
+    const incomplete = Boolean(c.compliance && !c.compliance.complete);
+    const unavailable = c.availability === "unavailable";
     return (
-      <li key={c.id} ref={(el) => { if (el) rowRefs.current.set(c.id, el); else rowRefs.current.delete(c.id); }} className={cn("transition-colors", active && "bg-primary-soft/60")}>
+      <li key={c.id} ref={(el) => { if (el) rowRefs.current.set(c.id, el); else rowRefs.current.delete(c.id); }} className={cn("group/row relative transition-colors", incomplete && !active && "bg-danger-soft/45", active && "bg-primary-soft/60")}>
+        {incomplete && c.compliance ? (
+          <span role="tooltip" className="pointer-events-none invisible absolute right-3 top-full z-40 -mt-1 w-72 max-w-[80vw] rounded-lg border border-line bg-surface p-3 text-left text-xs leading-5 opacity-0 shadow-[var(--shadow-pop)] transition-opacity group-hover/row:visible group-hover/row:opacity-100">
+            <strong className="mb-1 block text-[11px] uppercase tracking-wide text-muted">{t("Dossier de conformité", "Compliance file")}</strong>
+            <ul className="list-disc space-y-0.5 pl-4">{complianceDetails(c.compliance, locale).map((d) => <li key={d}>{d}</li>)}</ul>
+            <span className="mt-1.5 block font-medium text-danger">{t("Ne peut pas être attribué à une mission.", "Cannot be assigned to an assignment.")}</span>
+          </span>
+        ) : null}
         <button type="button" onClick={() => void open(c)} aria-expanded={active} className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-primary-soft/40">
           <Avatar name={c.fullName} photoUrl={c.photoUrl} size={36} />
           <span className="min-w-0 flex-1">
-            <span className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{c.fullName}</span>{c.assignment ? <AssignmentBadge status={c.assignment.status} /> : null}</span>
+            <span className="flex items-center gap-2"><span className="truncate text-sm font-semibold">{c.fullName}</span>{unavailable ? <Badge tone="red" className="shrink-0"><span className="h-1.5 w-1.5 rounded-full bg-danger" aria-hidden />{t("Indisponible", "Unavailable")}</Badge> : null}{incomplete ? <span className="shrink-0"><ComplianceBadge compliance={c.compliance!} tip={false} /></span> : null}{c.assignment ? <AssignmentBadge status={c.assignment.status} /> : null}</span>
             <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted">
               <Flag code={c.countryCode} region={c.region} />
               <span className="truncate">{c.city ?? "—"}</span>
               {c.postalCode ? <span className="rounded bg-surface-2 px-1 font-mono ring-1 ring-line">{c.postalCode}</span> : null}
-              {c.weeklyHours != null ? <span className="hidden items-center gap-0.5 sm:inline-flex"><Clock3 className="h-3 w-3" aria-hidden />{c.weeklyHours} h</span> : null}
+              {c.weeklyHours != null ? (() => { const left = Math.round((c.weeklyHours - c.weekUsed) * 100) / 100; return <span className={cn("hidden items-center gap-0.5 sm:inline-flex", left <= 0 ? "font-semibold text-danger" : left <= 4 ? "font-medium text-warning" : "")} title={t(`${Math.round(c.weekUsed * 100) / 100} h utilisées sur ${c.weeklyHours} h cette semaine`, `${Math.round(c.weekUsed * 100) / 100} h used out of ${c.weeklyHours} h this week`)}><Clock3 className="h-3 w-3" aria-hidden />{left > 0 ? t(`${left} h restantes`, `${left} h left`) : left === 0 ? t("complet", "full") : t(`+${-left} h en trop`, `${-left} h over`)}</span>; })() : <span className="hidden text-[11px] sm:inline">{t("heures non définies", "hours not set")}</span>}
             </span>
           </span>
           <span className="hidden shrink-0 md:block"><SkillChips skills={c.skills} max={2} /></span>
@@ -224,6 +253,9 @@ export function CandidateSearch({ target, routing, mapToken, unit, defaults, mis
 
         {active ? (
           <div className="anim-fade space-y-3 border-t border-line/70 px-4 pb-4 pt-3">
+            {unavailable ? <p role="status" className="rounded-lg border border-danger/30 bg-danger-soft px-3 py-2 text-xs font-medium text-danger">{t("Ce staff est marqué comme indisponible. Vous pouvez le consulter, mais l’attribution demandera une confirmation.", "This staff member is marked as unavailable. You can view them, but assigning will ask for confirmation.")}</p> : null}
+            {incomplete && c.compliance ? <div className="rounded-lg border border-danger/30 bg-danger-soft/60 px-3 py-2 text-xs"><ul className="list-disc space-y-0.5 pl-4">{complianceDetails(c.compliance, locale).map((d) => <li key={d}>{d}</li>)}</ul><Link href={`/staff/${c.id}/edit#documents`} className="mt-1 inline-block font-medium text-primary hover:underline">{t("Compléter les documents", "Complete the documents")}</Link></div> : null}
+            <div className="flex flex-wrap items-center gap-3 text-sm"><span className="text-xs font-semibold uppercase tracking-wide text-muted">{t("Heures / semaine", "Hours / week")}</span><HoursEditor staffId={c.id} cap={c.weeklyHours} used={c.weekUsed} onSaved={(v) => setResult((prev) => prev ? { ...prev, candidates: prev.candidates.map((x) => x.id === c.id ? { ...x, weeklyHours: v } : x) } : prev)} /></div>
             <div className="flex flex-wrap items-center gap-2"><AvailabilityBadge status={c.availability} />{c.staffCode ? <span className="font-mono text-xs text-muted">{c.staffCode}</span> : null}<span className="md:hidden"><SkillChips skills={c.skills} max={3} /></span></div>
 
             <div>
@@ -254,6 +286,9 @@ export function CandidateSearch({ target, routing, mapToken, unit, defaults, mis
                       );
                     })}
                   </div>
+                  {routeMode !== "public_transport" && travel.options[routeMode]?.status === "approximate" ? (
+                    <p className="mt-2 rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning">{t("Estimation approximative : distance à vol d’oiseau corrigée et vitesse moyenne supposée (aucun itinéraire réel disponible pour ce mode).", "Approximate estimate: straight-line distance with a detour factor and an assumed average speed (no real route available for this mode).")}</p>
+                  ) : null}
                   {routeMode === "public_transport" ? (
                     <p className="mt-2 rounded-lg bg-warning-soft px-3 py-2 text-xs text-warning">{t(`Durée en train estimée à vitesse moyenne supposée (${APP_CONFIG.routing.trainSpeedKmh} km/h + ${APP_CONFIG.routing.trainOverheadMinutes} min d’attente), sans horaire réel. Ligne pointillée = trajet direct approximatif.`, `Train time is estimated from an assumed average speed (${APP_CONFIG.routing.trainSpeedKmh} km/h + ${APP_CONFIG.routing.trainOverheadMinutes} min waiting), not a real timetable. Dotted line = approximate direct path.`)}</p>
                   ) : !realGeometry ? (
@@ -266,7 +301,7 @@ export function CandidateSearch({ target, routing, mapToken, unit, defaults, mis
 
             <div className="flex flex-wrap items-center gap-2">
               <ContactButtons phone={c.phone} />
-              {mission && !c.assignment && !missionClosed ? <Button size="sm" pending={selectingId === c.id} onClick={() => void select(c)}><UserPlus className="h-4 w-4" aria-hidden />{t("Sélectionner pour la mission", "Select for assignment")}</Button> : null}
+              {mission && !c.assignment && !missionClosed ? <Button size="sm" pending={selectingId === c.id} disabled={incomplete} title={incomplete ? t("Documents obligatoires manquants ou expirés", "Mandatory documents missing or expired") : undefined} onClick={() => void select(c)}><UserPlus className="h-4 w-4" aria-hidden />{t("Sélectionner pour la mission", "Select for assignment")}</Button> : null}
               {c.assignment ? <span className="inline-flex items-center gap-1 text-xs text-success"><Check className="h-4 w-4" aria-hidden />{t("Déjà sélectionné", "Already selected")}</span> : null}
               <Link href={`/staff/${c.id}`} className="ml-auto text-sm font-medium text-primary hover:underline">{t("Voir la fiche", "View profile")}</Link>
             </div>
@@ -276,12 +311,12 @@ export function CandidateSearch({ target, routing, mapToken, unit, defaults, mis
     );
   };
 
-  const mapCandidates = shown.map((c) => ({ id: c.id, name: c.fullName, latitude: c.latitude, longitude: c.longitude, assigned: Boolean(c.assignment), routeKnown: Boolean(c.route) }));
+  const mapCandidates = shown.map((c) => ({ id: c.id, name: c.fullName, latitude: c.latitude, longitude: c.longitude, assigned: Boolean(c.assignment), routeKnown: Boolean(c.route), unavailable: c.availability === "unavailable" }));
 
   // Carte partagée : on transmet l’état (marqueurs, tracé, point de recherche) à la carte unique du parent.
   const focusRef = React.useRef(focusFromMap);
   React.useEffect(() => { focusRef.current = focusFromMap; });
-  const sharedKey = JSON.stringify([origin?.latitude, origin?.longitude, radiusKm, highlightedId, mapCandidates.map((c) => `${c.id}${c.assigned ? 1 : 0}${c.routeKnown ? 1 : 0}`), realGeometry?.length ?? 0, realGeometry?.[0], approxLine?.[0]]);
+  const sharedKey = JSON.stringify([origin?.latitude, origin?.longitude, radiusKm, highlightedId, mapCandidates.map((c) => `${c.id}${c.assigned ? 1 : 0}${c.routeKnown ? 1 : 0}${c.unavailable ? 1 : 0}`), realGeometry?.length ?? 0, realGeometry?.[0], approxLine?.[0]]);
   const latest = React.useRef({ origin, radiusKm, mapCandidates, highlightedId, realGeometry, approxLine, title: mission?.title ?? t("Point de recherche", "Search point") });
   React.useEffect(() => { latest.current = { origin, radiusKm, mapCandidates, highlightedId, realGeometry, approxLine, title: mission?.title ?? t("Point de recherche", "Search point") }; });
   React.useEffect(() => {
@@ -360,6 +395,8 @@ export function CandidateSearch({ target, routing, mapToken, unit, defaults, mis
           </div>
         ) : null}
 
+        {autoRadius && result ? <p className="rounded-lg bg-surface-2 px-3 py-2 text-xs text-muted">{t(`Aucun staff sur place : rayon élargi automatiquement à ${autoRadius} km. Vous pouvez le modifier dans les filtres.`, `No staff on site: radius automatically widened to ${autoRadius} km. You can change it in the filters.`)}</p> : null}
+        {neighbours && grouped.towns.length > 0 ? <h3 className="px-1 pt-1 text-[10px] font-semibold uppercase tracking-[.14em] text-muted">{t("Staff vivant aux alentours", "Staff living nearby")}</h3> : null}
         {neighbours ? grouped.towns.map((g) => (
           <div key={g.town} className="card-surface overflow-hidden">
             <h3 className="flex items-center justify-between gap-2 border-b border-line bg-surface-2 px-4 py-2 text-sm">

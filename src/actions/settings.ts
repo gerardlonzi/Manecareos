@@ -71,7 +71,7 @@ export async function clearRouteCache(): Promise<ActionResult> {
   });
 }
 
-const passwordSchema = z.string().min(8, "8 caractères minimum").max(128).regex(/[A-Za-z]/, "Ajoutez une lettre").regex(/\d/, "Ajoutez un chiffre");
+const passwordSchema = z.string().min(10, "10 caractères minimum").max(128).regex(/[A-Za-z]/, "Ajoutez une lettre").regex(/\d/, "Ajoutez un chiffre");
 
 export async function changePassword(raw: unknown): Promise<ActionResult> {
   return withSession(async ({ supabase }) => {
@@ -92,5 +92,16 @@ export async function signOutOtherSessions(): Promise<ActionResult> {
     const { error } = await supabase.auth.signOut({ scope: "others" });
     if (error) return { ok: false, error: "Opération impossible. Réessayez." };
     return { ok: true, message: "Les autres sessions ont été fermées" };
+  });
+}
+
+/** Envoi automatique des e-mails de rappel d'expiration aux staffs (tâche quotidienne). */
+export async function setAutoEmailDocuments(enabled: boolean): Promise<ActionResult> {
+  return withSession(async ({ supabase, user }) => {
+    if (typeof enabled !== "boolean") return { ok: false, error: "Requête invalide" };
+    const { error } = await supabase.from("profiles").update({ auto_email_documents: enabled }).eq("id", user.id);
+    if (error) return { ok: false, error: "Enregistrement impossible. Réessayez." };
+    revalidatePath("/settings/documents");
+    return { ok: true, message: enabled ? "Envoi automatique activé" : "Envoi automatique désactivé" };
   });
 }

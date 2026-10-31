@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { alertThreshold, daysUntil, todayIso, type DocType } from "@/lib/documents";
+import { raiseDocumentAlert } from "@/lib/document-alerts";
+import { todayIso, type DocType } from "@/lib/documents";
 import { createAdminClient, isAdminConfigured } from "@/lib/supabase/admin";
-import { isEmailConfigured, sendEmail } from "@/lib/email/brevo";
-import { documentExpiryEmail } from "@/lib/email/templates";
 import { safeEqual } from "@/lib/security/token";
 
 export const dynamic = "force-dynamic";
@@ -38,38 +37,9 @@ export async function GET(req: Request) {
     const type = one(r.document_types), staff = one(r.staff);
     if (!type || !staff || type.archived_at) continue;
     stats.scanned++;
-    const daysLeft = daysUntil(r.expires_at, today);
-    const threshold = alertThreshold(daysLeft, type.alert_days?.length ? type.alert_days : [60, 30, 14, 7, 0]);
-    if (threshold === null) continue;
-
-    // Une seule alerte par document / échéance / seuil (idempotent : le cron peut être relancé sans doublon).
-    const { error: dup } = await db.from("document_alerts").insert({ owner_id: r.owner_id, document_id: r.id, expires_on: r.expires_at, threshold_days: threshold, kind: "notification" });
-    if (dup) continue;
-
-    const expired = daysLeft < 0;
     const p = prof.get(r.owner_id);
-    let emailedAt: string | null = null;
-
-    if (p?.auto_email_documents && staff.email && isEmailConfigured()) {
-      const mail = documentExpiryEmail({ staffName: staff.full_name, documentName: { fr: type.name_fr, en: type.name_en }, expiresOn: r.expires_at, daysLeft, company: p.company_name || "Maneliza Care" });
-      const sent = await sendEmail({ to: staff.email, toName: staff.full_name, ...mail });
-      if (sent.ok) {
-        emailedAt = new Date().toISOString();
-        await db.from("document_alerts").insert({ owner_id: r.owner_id, document_id: r.id, expires_on: r.expires_at, threshold_days: threshold, kind: "email" });
-        await db.from("document_access_log").insert({ owner_id: r.owner_id, staff_id: r.staff_id, document_id: r.id, action: "email_sent" });
-        stats.emailed++;
-      }
-    }
-
-    const reasonFr = expired ? `a expiré le ${r.expires_at}` : daysLeft === 0 ? "expire aujourd’hui" : `expire dans ${daysLeft} jour(s) (${r.expires_at})`;
-    await db.from("notifications").insert({
-      owner_id: r.owner_id, type: expired ? "document_expired" : "document_expiring",
-      title: expired ? "Document expiré" : "Document bientôt expiré",
-      message: `${staff.full_name} : « ${type.name_fr} » ${reasonFr}.` + (emailedAt ? " Un e-mail de rappel a été envoyé automatiquement au staff." : ""),
-      link: `/staff/${r.staff_id}`, email_sent_at: emailedAt,
-      metadata: { document_id: r.id, staff_id: r.staff_id, staff_name: staff.full_name, expires_on: r.expires_at, days_left: daysLeft, threshold, auto_email: Boolean(emailedAt), doc_fr: type.name_fr, doc_en: type.name_en },
-    });
-    stats.notified++;
+    const res = await raiseDocumentAlert(db, { ownerId: r.owner_id, documentId: r.id, staffId: r.staff_id, staff, type, expiresOn: r.expires_at, autoEmail: Boolean(p?.auto_email_documents), company: p?.company_name || "Maneliza Care" });
+    if (res === "notified") stats.notified++;
   }
 
   // Purge : activité > 21 jours, journal d’accès > 12 mois, codes de connexion périmés.

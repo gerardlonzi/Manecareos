@@ -15,8 +15,14 @@ export const EVENT_LABELS: Record<string, string> = {
   import_completed: "Import CSV terminé",
   export_completed: "Export CSV terminé",
   routing_failed: "Échec du calcul d'itinéraire",
+  document_saved: "Document enregistré",
+  document_deleted: "Document supprimé",
+  document_email_sent: "E-mail de rappel envoyé",
+  assignment_hours_updated: "Heures de mission mises à jour",
+  assignment_completed: "Mission terminée par le staff",
 };
 
 export const EVENT_LABELS_EN: Record<string, string> = {
   staff_created: "Staff profile created", staff_updated: "Staff profile updated", staff_archived: "Staff profile archived", availability_changed: "Availability changed", location_resolved: "Location verified", location_failed: "Location verification failed", staff_contacted: "Staff marked as contacted", mission_created: "Assignment created", mission_updated: "Assignment updated", mission_status_changed: "Assignment status changed", mission_cancelled: "Assignment cancelled", staff_selected: "Staff selected", assignment_status_changed: "Assignment status changed", import_completed: "CSV import completed", export_completed: "Export completed", routing_failed: "Route calculation failed",
+  document_saved: "Document saved", document_deleted: "Document deleted", document_email_sent: "Reminder email sent", assignment_hours_updated: "Assignment hours updated", assignment_completed: "Staff assignment completed",
 };
